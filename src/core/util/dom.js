@@ -6,12 +6,12 @@
  * @name DomUtil
  */
 
-import Browser from 'core/Browser';
+import Browser from  '../Browser';
 import { IS_NODE } from './env';
 import { isString, isNil } from './common';
 import { splitWords } from './strings';
-import Point from 'geo/Point';
-import Size from 'geo/Size';
+import Point from '../../geo/Point';
+import Size from '../../geo/Size';
 
 const first = (props) => {
     return props[0];
@@ -344,8 +344,8 @@ export function getEventContainerPoint(ev, dom) {
     }
     // div by scaleX, scaleY to fix #450
     return new Point(
-        ev.clientX / domPos[2] - domPos[0] - dom.clientLeft,
-        ev.clientY / domPos[3] - domPos[1] - dom.clientTop
+        (ev.clientX - domPos[0] - dom.clientLeft) / domPos[2],
+        (ev.clientY - domPos[1] - dom.clientTop) / domPos[3]
     );
 }
 

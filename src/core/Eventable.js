@@ -20,11 +20,14 @@ const Eventable = Base =>
          * foo.on('mousedown mousemove mouseup', onMouseEvent, foo);
          */
         on(eventsOn, handler, context) {
-            if (!eventsOn || !handler) {
+            if (!eventsOn) {
                 return this;
             }
             if (!isString(eventsOn)) {
                 return this._switch('on', eventsOn, handler);
+            }
+            if (!handler) {
+                return this;
             }
             if (!this._eventMap) {
                 this._eventMap = {};
@@ -111,11 +114,14 @@ const Eventable = Base =>
          * @function Eventable.off
          */
         off(eventsOff, handler, context) {
-            if (!eventsOff || !this._eventMap || !handler) {
+            if (!this._eventMap || !eventsOff) {
                 return this;
             }
             if (!isString(eventsOff)) {
                 return this._switch('off', eventsOff, handler);
+            }
+            if (!handler) {
+                return this;
             }
             const eventTypes = eventsOff.split(' ');
             let eventType, listeners, wrapKey;
@@ -135,6 +141,9 @@ const Eventable = Base =>
                         delete listener.handler[wrapKey];
                         listeners.splice(i, 1);
                     }
+                }
+                if (!listeners.length) {
+                    delete this._eventMap[eventType];
                 }
             }
             return this;
@@ -170,18 +179,28 @@ const Eventable = Base =>
             if (!handlerChain || !handlerChain.length) {
                 return 0;
             }
-            let count = 0;
+            if (!handler) {
+                return handlerChain.length;
+            }
             for (let i = 0, len = handlerChain.length; i < len; i++) {
-                if (handler) {
-                    if (handler === handlerChain[i].handler &&
-                        (isNil(context) || handlerChain[i].context === context)) {
-                        return 1;
-                    }
-                } else {
-                    count++;
+                if (handler === handlerChain[i].handler &&
+                    (isNil(context) || handlerChain[i].context === context)) {
+                    return 1;
                 }
             }
-            return count;
+            return 0;
+        }
+
+        /**
+         * Get all the listening event types
+         *
+         * @returns {String[]} events
+         */
+        getListeningEvents() {
+            if (!this._eventMap) {
+                return [];
+            }
+            return Object.keys(this._eventMap);
         }
 
         /**

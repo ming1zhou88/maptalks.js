@@ -1,23 +1,23 @@
-import { Animation } from 'core/Animation';
-import Coordinate from 'geo/Coordinate';
-import Point from 'geo/Point';
+import { Animation } from '../core/Animation';
+import Coordinate from '../geo/Coordinate';
+import Point from '../geo/Point';
 import Map from './Map';
-import { isNil, isFunction, hasOwn } from 'core/util';
+import { isNil, isFunction, hasOwn } from '../core/util';
 
-function equalView(view1, view2) {
-    for (const p in view1) {
-        if (hasOwn(view1, p)) {
-            if (p === 'center') {
-                if (view1[p][0] !== view2[p][0] || view1[p][1] !== view2[p][1]) {
-                    return false;
-                }
-            } else if (view1[p] !== view2[p]) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
+// function equalView(view1, view2) {
+//     for (const p in view1) {
+//         if (hasOwn(view1, p)) {
+//             if (p === 'center') {
+//                 if (view1[p][0] !== view2[p][0] || view1[p][1] !== view2[p][1]) {
+//                     return false;
+//                 }
+//             } else if (view1[p] !== view2[p]) {
+//                 return false;
+//             }
+//         }
+//     }
+//     return true;
+// }
 
 Map.include(/** @lends Map.prototype */{
 
@@ -45,7 +45,7 @@ Map.include(/** @lends Map.prototype */{
      * @return {Map}         this
      */
     animateTo(view, options = {}, step) {
-        this._stopAnim();
+        // this._stopAnim(this._animPlayer);
         if (isFunction(options)) {
             step = options;
             options = {};
@@ -55,7 +55,7 @@ Map.include(/** @lends Map.prototype */{
             props = {};
         let empty = true;
         for (const p in view) {
-            if (hasOwn(view, p) && !isNil(currView[p])) {
+            if (hasOwn(view, p) && (p === 'prjCenter' || !isNil(currView[p]))) {
                 empty = false;
                 if (p === 'center') {
                     const from = new Coordinate(currView[p]).toFixed(7),
@@ -63,16 +63,31 @@ Map.include(/** @lends Map.prototype */{
                     if (!from.equals(to)) {
                         props['center'] = [from, to];
                     }
+                } else if (p === 'prjCenter') {
+                    const from = new Coordinate(this._getPrjCenter());
+                    const to = new Coordinate(view[p]);
+                    if (!from.equals(to)) {
+                        props['prjCenter'] = [from, to];
+                    }
                 } else if (currView[p] !== view[p] && p !== 'around') {
                     props[p] = [currView[p], view[p]];
                 }
             }
         }
         if (empty) {
-            return this;
+            return null;
+        }
+        if (this._animPlayer) {
+            if (this._isInternalAnimation) {
+                this._animPlayer.pause();
+                this._prevAnimPlayer = this._animPlayer;
+            } else {
+                delete this._prevAnimPlayer;
+                this._stopAnim(this._animPlayer);
+            }
         }
         const zoomOrigin = view['around'] || new Point(this.width / 2, this.height / 2);
-        let preView = this.getView();
+        // let preView = this.getView();
         const renderer = this._getRenderer(),
             framer = function (fn) {
                 renderer.callInNextFrame(fn);
@@ -88,16 +103,20 @@ Map.include(/** @lends Map.prototype */{
                 return;
             }
             if (player.playState === 'running') {
-                const view = this.getView();
-                if (!equalView(view, preView)) {
-                    // map's view is updated and stop animation
-                    this._stopAnim();
-                    return;
-                }
+                // const view = this.getView();
+                // if (!options['continueOnViewChanged'] && !equalView(view, preView)) {
+                //     // map's view is updated by another operation, animation should stop
+                //     this._stopAnim(player);
+                //     return;
+                // }
                 if (frame.styles['center']) {
                     const center = frame.styles['center'];
                     this._setPrjCenter(projection.project(center));
-                    this.onMoving();
+                    this.onMoving(this._parseEventFromCoord(this.getCenter()));
+                } else if (frame.styles['prjCenter']) {
+                    const center = frame.styles['prjCenter'];
+                    this._setPrjCenter(center);
+                    this.onMoving(this._parseEventFromCoord(this.getCenter()));
                 }
                 if (!isNil(frame.styles['zoom'])) {
                     this.onZooming(frame.styles['zoom'], zoomOrigin);
@@ -108,12 +127,22 @@ Map.include(/** @lends Map.prototype */{
                 if (!isNil(frame.styles['bearing'])) {
                     this.setBearing(frame.styles['bearing']);
                 }
-                preView = this.getView();
+                // preView = this.getView();
+                /**
+                 * fired when map is animating.  (panning, zooming, rotating)
+                 *
+                 * @event Map#animating
+                 * @type {Object}
+                 * @property {String} type - animating
+                 * @property {Map} target - the map fires the event
+                 */
                 this._fireEvent('animating');
             } else if (player.playState === 'finished') {
                 if (!player._interupted) {
                     if (props['center']) {
                         this._setPrjCenter(projection.project(props['center'][1]));
+                    } else if (props['prjCenter']) {
+                        this._setPrjCenter(props['prjCenter'][1]);
                     }
                     if (!isNil(props['pitch'])) {
                         this.setPitch(props['pitch'][1]);
@@ -122,7 +151,8 @@ Map.include(/** @lends Map.prototype */{
                         this.setBearing(props['bearing'][1]);
                     }
                 }
-                this._endAnim(props, zoomOrigin, options);
+                this._endAnim(player, props, zoomOrigin, options);
+                // preView = this.getView();
             }
             if (step) {
                 step(frame);
@@ -131,7 +161,17 @@ Map.include(/** @lends Map.prototype */{
 
         this._startAnim(props, zoomOrigin);
 
-        return this;
+        return player;
+    },
+
+    _animateTo(view, options = {}, step) {
+        if (this._mapAnimPlayer) {
+            this._stopAnim(this._mapAnimPlayer);
+        }
+        this._isInternalAnimation = true;
+        this._mapAnimPlayer = this.animateTo(view, options, step);
+        delete this._isInternalAnimation;
+        return this._mapAnimPlayer;
     },
 
     /**
@@ -146,18 +186,54 @@ Map.include(/** @lends Map.prototype */{
         return this.isDragRotating() || !!this._animRotating;
     },
 
-    _endAnim(props, zoomOrigin, options) {
+    _endAnim(player, props, zoomOrigin, options) {
         delete this._animRotating;
-        let evtType;
-        if (this._animPlayer) {
-            evtType = this._animPlayer._interupted ? 'animateinterupted' : 'animateend';
+        /**
+         * fired when map's animation is interrupted by mouse event or else.
+         *
+         * @event Map#animateinterrupted
+         * @type {Object}
+         * @property {String} type - animateinterrupted
+         * @property {Map} target - the map fires the event
+         */
+        /**
+         * fired when map's animation ended (panning, zooming, rotating).
+         *
+         * @event Map#animateend
+         * @type {Object}
+         * @property {String} type - animateend
+         * @property {Map} target - the map fires the event
+         */
+        const evtType = player._interupted ? 'animateinterrupted' : 'animateend';
+        if (player === this._animPlayer) {
             delete this._animPlayer;
         }
+        if (player === this._mapAnimPlayer) {
+            delete this._mapAnimPlayer;
+        }
         if (props['center']) {
-            this.onMoveEnd();
+            let endCoord;
+            if (player._interupted) {
+                endCoord = this.getCenter();
+            } else {
+                endCoord = props['center'][1];
+            }
+            this.onMoveEnd(this._parseEventFromCoord(endCoord));
+        } else if (props['prjCenter']) {
+            let endCoord;
+            if (player._interupted) {
+                endCoord = this._getPrjCenter();
+            } else {
+                endCoord = props['prjCenter'][1];
+            }
+            const event = this._parseEventFromCoord(this.getProjection().unproject(endCoord));
+            event['point2d'] = this._prjToPoint(endCoord);
+            this.onMoveEnd(event);
         }
         if (!isNil(props['zoom'])) {
-            if (!options['wheelZoom']) {
+            if (player._interupted) {
+                this.onZoomEnd(this.getZoom(), zoomOrigin);
+            } else if (!options['wheelZoom']) {
                 this.onZoomEnd(props['zoom'][1], zoomOrigin);
             } else {
                 this.onZooming(props['zoom'][1], zoomOrigin);
@@ -165,6 +241,15 @@ Map.include(/** @lends Map.prototype */{
         }
         if (evtType) {
             this._fireEvent(evtType);
+        }
+        if (!isNil(props['pitch']) && !this.getPitch()) {
+            //https://github.com/maptalks/maptalks.js/issues/732
+            //fix blank map when pitch changes to 0
+            this.getRenderer().setToRedraw();
+        }
+        if (this._prevAnimPlayer) {
+            this._animPlayer = this._prevAnimPlayer;
+            this._prevAnimPlayer.play();
         }
     },
 
@@ -181,14 +266,35 @@ Map.include(/** @lends Map.prototype */{
         if (props['pitch'] || props['bearing']) {
             this._animRotating = true;
         }
+        /**
+         * fired when map starts to animate (panning, zooming, rotating).
+         *
+         * @event Map#animatestart
+         * @type {Object}
+         * @property {String} type - animatestart
+         * @property {Map} target - the map fires the event
+         */
         this._fireEvent('animatestart');
         this._animPlayer.play();
     },
 
-    _stopAnim() {
-        if (this._animPlayer) {
-            this._animPlayer._interupted = true;
-            this._animPlayer.finish();
+    _stopAnim(player) {
+        if (!player) {
+            return;
+        }
+        if (player.playState !== 'finished') {
+            player._interupted = true;
+            player.cancel();
+        }
+        if (player === this._animPlayer && this._prevAnimPlayer) {
+            this._animPlayer = this._prevAnimPlayer;
+            this._prevAnimPlayer.play();
+        }
+        if (player === this._animPlayer) {
+            delete this._animPlayer;
+        }
+        if (player === this._mapAnimPlayer) {
+            delete this._mapAnimPlayer;
         }
     }
 });

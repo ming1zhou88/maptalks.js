@@ -7,7 +7,10 @@ describe('UI.ContextMenu', function () {
     };
 
     beforeEach(function () {
-        var setups = COMMON_CREATE_MAP(center);
+        var setups = COMMON_CREATE_MAP(center, null, {
+            width : 800,
+            height : 600
+        });
         container = setups.container;
         map = setups.map;
         context.map = map;
@@ -149,16 +152,20 @@ describe('UI.ContextMenu', function () {
 
 
 
-        map.on('frameend', function () {
+        map.once('frameend', function () {
             target.setMenu({
                 items: items,
                 animation : null,
                 width: 250
             });
             target.openMenu();
-            var pos = map.getViewPoint().round();
-            expect(map._panels.front.style.transform).to.be.eql('translate3d(' + pos.x + 'px, ' + pos.y + 'px, 0px)');
-            done();
+            map.getRenderer().callInNextFrame(function () {
+                map.getRenderer().callInNextFrame(function () {
+                    var pos = map.getViewPoint().round();
+                    expect(map.getPanels().front.style.transform).to.be.eql('translate3d(' + pos.x + 'px, ' + pos.y + 'px, 0px)');
+                    done();
+                });
+            });
         });
         map.setCenter(map.getCenter().add(0.01, 0.02));
     });
@@ -181,12 +188,17 @@ describe('UI.ContextMenu', function () {
         });
 
         target.openMenu();
-        map.on('frameend', function () {
+        map.once('frameend', function () {
 
             target.openMenu();
-            var pos = map.getViewPoint().round();
-            expect(map._panels.front.style.transform).to.be.eql('translate3d(' + pos.x + 'px, ' + pos.y + 'px, 0px)');
-            done();
+            map.getRenderer().callInNextFrame(function () {
+                map.getRenderer().callInNextFrame(function () {
+                    var pos = map.getViewPoint().round();
+                expect(map.getPanels().front.style.transform).to.be.eql('translate3d(' + pos.x + 'px, ' + pos.y + 'px, 0px)');
+                done();
+                });
+            });
+
         });
         map.setCenter(map.getCenter().add(0.01, 0.02));
     });
@@ -230,12 +242,11 @@ function runTests(target, _context) {
         var domPosition = GET_PAGE_POSITION(eventContainer);
         var point = _context.map.coordinateToContainerPoint(target.getFirstCoordinate()).add(domPosition);
 
-        happen.click(eventContainer, {
+        happen.once(eventContainer, {
+            'type' : 'contextmenu',
             'clientX':point.x,
-            'clientY':point.y,
-            'button' : 2
+            'clientY':point.y
         });
-
     }
 
     context('Type of ' + type, function () {

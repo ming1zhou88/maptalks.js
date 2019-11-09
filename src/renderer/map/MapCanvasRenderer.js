@@ -1,10 +1,10 @@
-import { IS_NODE, isNumber, isFunction, requestAnimFrame, cancelAnimFrame, equalMapView } from 'core/util';
-import { createEl, preventSelection, computeDomPosition } from 'core/util/dom';
-import Browser from 'core/Browser';
-import Point from 'geo/Point';
-import Canvas2D from 'core/Canvas';
+import { IS_NODE, isNumber, isFunction, requestAnimFrame, cancelAnimFrame, equalMapView } from '../../core/util';
+import { createEl, preventSelection, computeDomPosition, addDomEvent, removeDomEvent } from '../../core/util/dom';
+import Browser from '../../core/Browser';
+import Point from '../../geo/Point';
+import Canvas2D from '../../core/Canvas';
 import MapRenderer from './MapRenderer';
-import Map from 'map/Map';
+import Map from '../../map/Map';
 
 /**
  * @classdesc
@@ -34,7 +34,7 @@ class MapCanvasRenderer extends MapRenderer {
      * render layers in current frame
      * @return {Boolean} return false to cease frame loop
      */
-    renderFrame() {
+    renderFrame(framestamp) {
         if (!this.map) {
             return false;
         }
@@ -42,7 +42,7 @@ class MapCanvasRenderer extends MapRenderer {
         map._fireEvent('framestart');
         this.updateMapDOM();
         const layers = this._getAllLayerToRender();
-        this.drawLayers(layers);
+        this.drawLayers(layers, framestamp);
         this.drawLayerCanvas(layers);
         // CAUTION: the order to fire frameend and layerload events
         // fire frameend before layerload, reason:
@@ -56,7 +56,7 @@ class MapCanvasRenderer extends MapRenderer {
         delete this._spatialRefChanged;
         this._fireLayerLoadEvents();
         this.executeFrameCallbacks();
-        this._needRedraw = false;
+        this._canvasUpdated = false;
         return true;
     }
 
@@ -69,10 +69,12 @@ class MapCanvasRenderer extends MapRenderer {
         const offset = map._getViewPointFrameOffset();
         if (offset) {
             map.offsetPlatform(offset);
+        } else if (this.domChanged()) {
+            this.offsetPlatform(null, true);
         }
     }
 
-    drawLayers(layers) {
+    drawLayers(layers, framestamp) {
         const map = this.map,
             isInteracting = map.isInteracting(),
             // all the visible canvas layers' ids.
@@ -86,7 +88,7 @@ class MapCanvasRenderer extends MapRenderer {
             l = layers.length;
         const baseLayer = map.getBaseLayer();
         let t = 0;
-        for (let i = l - 1; i >= 0; i--) {
+        for (let i = 0; i < l; i++) {
             const layer = layers[i];
             if (!layer.isVisible()) {
                 continue;
@@ -106,15 +108,16 @@ class MapCanvasRenderer extends MapRenderer {
                 if (!needsRedraw) {
                     updatedIds.push(layer.getId());
                 }
-                this.setToRedraw();
+                this.setLayerCanvasUpdated();
             }
-            delete renderer.__shouldZoomTransform;
+            const transformMatrix = renderer.__zoomTransformMatrix;
+            delete renderer.__zoomTransformMatrix;
             if (!needsRedraw) {
                 if (isCanvas && isInteracting) {
                     if (map.isZooming() && !map.getPitch()) {
                         // transform layer's current canvas when zooming
                         renderer.prepareRender();
-                        renderer.__shouldZoomTransform = true;
+                        renderer.__zoomTransformMatrix = this._zoomMatrix;
                     } else if (map.getPitch() || map.isRotating()) {
                         // when map is pitching or rotating, clear the layer canvas
                         // otherwise, leave layer's canvas unchanged
@@ -129,21 +132,26 @@ class MapCanvasRenderer extends MapRenderer {
                     layer._getRenderer().clearCanvas();
                     continue;
                 }
-                t += this._drawCanvasLayerOnInteracting(layer, t, timeLimit);
+                t += this._drawCanvasLayerOnInteracting(layer, t, timeLimit, framestamp);
             } else if (isInteracting && renderer.drawOnInteracting) {
                 // dom layers
                 if (renderer.prepareRender) {
                     renderer.prepareRender();
                 }
-                renderer.drawOnInteracting(this._eventParam);
+                renderer.drawOnInteracting(this._eventParam, framestamp);
             } else {
                 // map is not interacting, call layer's render
-                renderer.render();
+                renderer.render(framestamp);
+                //地图缩放完以后，如果下一次render需要载入资源，仍需要设置transformMatrix
+                //防止在资源载入完成之前，缺少transformMatrix导致的绘制错误
+                if (isCanvas && transformMatrix && renderer.isLoadingResource()) {
+                    renderer.__zoomTransformMatrix = transformMatrix;
+                }
             }
 
             if (isCanvas) {
                 updatedIds.push(layer.getId());
-                this.setToRedraw();
+                this.setLayerCanvasUpdated();
             }
         }
         // compare:
@@ -154,10 +162,10 @@ class MapCanvasRenderer extends MapRenderer {
         const preUpdatedIds = this._updatedIds || [];
         this._canvasIds = canvasIds;
         this._updatedIds = updatedIds;
-        if (!this._needToRedraw()) {
+        if (!this.isLayerCanvasUpdated()) {
             const sep = '---';
             if (preCanvasIds.join(sep) !== canvasIds.join(sep) || preUpdatedIds.join(sep) !== updatedIds.join(sep)) {
-                this.setToRedraw();
+                this.setLayerCanvasUpdated();
             }
         }
     }
@@ -174,7 +182,7 @@ class MapCanvasRenderer extends MapRenderer {
         const map = this.map;
         const renderer = layer._getRenderer();
         if (layer.isCanvasRender()) {
-            return renderer.needToRedraw();
+            return renderer.testIfNeedRedraw();
         } else {
             if (renderer.needToRedraw && renderer.needToRedraw()) {
                 return true;
@@ -192,39 +200,39 @@ class MapCanvasRenderer extends MapRenderer {
      * @return {Number}       time to draw this layer
      * @private
      */
-    _drawCanvasLayerOnInteracting(layer, t, timeLimit) {
+    _drawCanvasLayerOnInteracting(layer, t, timeLimit, framestamp) {
         const map = this.map,
             renderer = layer._getRenderer(),
             drawTime = renderer.getDrawTime(),
             inTime = timeLimit === 0 || timeLimit > 0 && t + drawTime <= timeLimit;
         if (renderer.mustRenderOnInteracting && renderer.mustRenderOnInteracting()) {
-            renderer.render();
+            renderer.render(framestamp);
         } else if (renderer.drawOnInteracting &&
             (layer === map.getBaseLayer() || inTime ||
-            map.isZooming() && layer.options['forceRenderOnZooming'] ||
-            map.isMoving() && layer.options['forceRenderOnMoving'] ||
-            map.isRotating() && layer.options['forceRenderOnRotating'])
+                map.isZooming() && layer.options['forceRenderOnZooming'] ||
+                map.isMoving() && layer.options['forceRenderOnMoving'] ||
+                map.isRotating() && layer.options['forceRenderOnRotating'])
         ) {
             // call drawOnInteracting to redraw the layer
             renderer.prepareRender();
             renderer.prepareCanvas();
-            renderer.drawOnInteracting(this._eventParam);
+            renderer.drawOnInteracting(this._eventParam, framestamp);
             return drawTime;
-        } else if (map.isZooming() && !map.getPitch()) {
+        } else if (map.isZooming() && !map.getPitch() && !map.isRotating()) {
             // when:
             // 1. layer's renderer doesn't have drawOnInteracting
             // 2. timeLimit is exceeded
             // then:
             // transform layer's current canvas when zooming
             renderer.prepareRender();
-            renderer.__shouldZoomTransform = true;
+            renderer.__zoomTransformMatrix = this._zoomMatrix;
         } else if (map.getPitch() || map.isRotating()) {
             // when map is pitching or rotating, clear the layer canvas
             // otherwise, leave layer's canvas unchanged
             renderer.clearCanvas();
         }
         if (renderer.drawOnInteracting && !inTime) {
-            renderer.onSkipDrawOnInteracting(this._eventParam);
+            renderer.onSkipDrawOnInteracting(this._eventParam, framestamp);
         }
         return 0;
     }
@@ -261,12 +269,12 @@ class MapCanvasRenderer extends MapRenderer {
 
     }
 
-    _needToRedraw() {
-        return this._needRedraw;
+    isLayerCanvasUpdated() {
+        return this._canvasUpdated;
     }
 
-    setToRedraw() {
-        this._needRedraw = true;
+    setLayerCanvasUpdated() {
+        this._canvasUpdated = true;
     }
 
     /**
@@ -277,7 +285,7 @@ class MapCanvasRenderer extends MapRenderer {
         if (!map) {
             return;
         }
-        if (!this._needToRedraw() && !this.isViewChanged()) {
+        if (!this.isLayerCanvasUpdated() && !this.isViewChanged()) {
             return;
         }
         if (!this.canvas) {
@@ -304,6 +312,7 @@ class MapCanvasRenderer extends MapRenderer {
             limit = map.options['layerCanvasLimitOnInteracting'];
         let len = layers.length;
 
+        let baseLayerImage;
         const images = [];
         for (let i = 0; i < len; i++) {
             if (!layers[i].isVisible() || !layers[i].isCanvasRender()) {
@@ -315,14 +324,23 @@ class MapCanvasRenderer extends MapRenderer {
             }
             const layerImage = this._getLayerImage(layers[i]);
             if (layerImage && layerImage['image']) {
-                images.push([layers[i], layerImage]);
+                if (layers[i] === map.getBaseLayer()) {
+                    baseLayerImage = [layers[i], layerImage];
+                } else {
+                    images.push([layers[i], layerImage]);
+                }
             }
+        }
+
+        if (baseLayerImage) {
+            this._drawLayerCanvasImage(baseLayerImage[0], baseLayerImage[1]);
+            this._drawFog();
         }
 
         len = images.length;
         const start = interacting && limit >= 0 && len > limit ? len - limit : 0;
         for (let i = start; i < len; i++) {
-            this._drawLayerCanvasImage.apply(this, images[i]);
+            this._drawLayerCanvasImage(images[i][0], images[i][1]);
         }
 
 
@@ -338,6 +356,17 @@ class MapCanvasRenderer extends MapRenderer {
         map._fireEvent('renderend', {
             'context': this.context
         });
+    }
+
+    setToRedraw() {
+        const layers = this._getAllLayerToRender();
+        for (let i = 0, l = layers.length; i < l; i++) {
+            const renderer = layers[i].getRenderer();
+            if (renderer && renderer.canvas && renderer.setToRedraw) {
+                //to fix lost webgl context
+                renderer.setToRedraw();
+            }
+        }
     }
 
     updateMapSize(size) {
@@ -373,6 +402,9 @@ class MapCanvasRenderer extends MapRenderer {
     }
 
     remove() {
+        if (Browser.webgl && typeof document !== 'undefined') {
+            removeDomEvent(document, 'visibilitychange', this._onVisibilitychange, this);
+        }
         if (this._resizeInterval) {
             clearInterval(this._resizeInterval);
         }
@@ -404,6 +436,11 @@ class MapCanvasRenderer extends MapRenderer {
             if (renderer.isBlank && renderer.isBlank()) {
                 continue;
             }
+            // renderer.hitDetect(point)) .  This can't ignore the shadows.
+            /**
+             * TODO
+             *  This requires a better way to judge
+             */
             if (layer.options['cursor'] !== 'default' && renderer.hitDetect(point)) {
                 cursor = layer.options['cursor'] || 'pointer';
                 break;
@@ -454,7 +491,7 @@ class MapCanvasRenderer extends MapRenderer {
         const POSITION0 = 'position:absolute;top:0px;left:0px;';
 
         const mapWrapper = createContainer('mapWrapper', 'maptalks-wrapper', 'position:absolute;overflow:hidden;', true),
-            mapAllLayers = createContainer('allLayers', 'maptalks-all-layers', POSITION0 + 'padding:0px;margin:0px;z-index:0', true),
+            mapAllLayers = createContainer('allLayers', 'maptalks-all-layers', POSITION0 + 'padding:0px;margin:0px;z-index:0;overflow:visible;', true),
             backStatic = createContainer('backStatic', 'maptalks-back-static', POSITION0 + 'z-index:0;', true),
             back = createContainer('back', 'maptalks-back', POSITION0 + 'z-index:1;'),
             backLayer = createContainer('backLayer', 'maptalks-back-layer', POSITION0),
@@ -470,9 +507,12 @@ class MapCanvasRenderer extends MapRenderer {
 
         mapAllLayers.appendChild(backStatic);
         back.appendChild(backLayer);
+        back.layerDOM = backLayer;
         mapAllLayers.appendChild(back);
         mapAllLayers.appendChild(canvasContainer);
         front.appendChild(frontLayer);
+        front.layerDOM = frontLayer;
+        front.uiDOM = ui;
         mapAllLayers.appendChild(frontStatic);
         mapAllLayers.appendChild(front);
         front.appendChild(ui);
@@ -531,14 +571,14 @@ class MapCanvasRenderer extends MapRenderer {
     /**
     * Main frame loop
     */
-    _frameLoop() {
+    _frameLoop(framestamp) {
         if (!this.map) {
             this._cancelFrameLoop();
             return;
         }
-        this.renderFrame();
+        this.renderFrame(framestamp);
         // Keep registering ourselves for the next animation frame
-        this._animationFrame = requestAnimFrame(() => { this._frameLoop(); });
+        this._animationFrame = requestAnimFrame((framestamp) => { this._frameLoop(framestamp); });
     }
 
     _cancelFrameLoop() {
@@ -550,11 +590,13 @@ class MapCanvasRenderer extends MapRenderer {
     _drawLayerCanvasImage(layer, layerImage) {
         const ctx = this.context;
         const point = layerImage['point'].round();
-        if (Browser.retina) {
-            point._multi(2);
+        const dpr = this.map.getDevicePixelRatio();
+        if (dpr !== 1) {
+            point._multi(dpr);
         }
         const canvasImage = layerImage['image'];
-        if (point.x + canvasImage.width <= 0 || point.y + canvasImage.height <= 0) {
+        const width = canvasImage.width, height = canvasImage.height;
+        if (point.x + width <= 0 || point.y + height <= 0) {
             return;
         }
         //opacity of the layer image
@@ -583,12 +625,14 @@ class MapCanvasRenderer extends MapRenderer {
         if (layer.options['cssFilter']) {
             ctx.filter = layer.options['cssFilter'];
         }
-        const matrix = this._zoomMatrix;
-        const shouldTransform = !!layer._getRenderer().__shouldZoomTransform;
-        if (matrix && shouldTransform) {
+        const renderer = layer.getRenderer();
+        const matrix = renderer.__zoomTransformMatrix;
+        const clipped = renderer.clipCanvas(this.context);
+        if (matrix) {
             ctx.save();
             ctx.setTransform.apply(ctx, matrix);
         }
+
         /*let outlineColor = layer.options['debugOutline'];
         if (outlineColor) {
             if (outlineColor === true) {
@@ -602,8 +646,11 @@ class MapCanvasRenderer extends MapRenderer {
                 point.x + 18, point.y + 18);
         }*/
 
-        ctx.drawImage(canvasImage, point.x, point.y);
-        if (matrix && shouldTransform) {
+        ctx.drawImage(canvasImage, 0, 0, width, height, point.x, point.y, width, height);
+        if (matrix) {
+            ctx.restore();
+        }
+        if (clipped) {
             ctx.restore();
         }
         if (ctx.filter !== 'none') {
@@ -620,9 +667,34 @@ class MapCanvasRenderer extends MapRenderer {
             if (isFunction(cross)) {
                 cross(ctx, p);
             } else {
-                Canvas2D.drawCross(this.context, p, 2, '#f00');
+                Canvas2D.drawCross(this.context, p.x, p.y, 2, '#f00');
             }
         }
+    }
+
+    _drawFog() {
+        const map = this.map;
+        if (map.getPitch() <= map.options['maxVisualPitch'] || !map.options['fog']) {
+            return;
+        }
+        const fogThickness = 30;
+        const r = map.getDevicePixelRatio();
+        const ctx = this.context,
+            clipExtent = map.getContainerExtent();
+        let top = (map.height - map._getVisualHeight(75)) * r;
+        if (top < 0) top = 0;
+        const bottom = clipExtent.ymin * r,
+            h = Math.ceil(bottom - top),
+            color = map.options['fogColor'].join();
+        const gradient = ctx.createLinearGradient(0, top, 0, bottom + fogThickness);
+        const landscape = 1 - fogThickness / (h + fogThickness);
+        gradient.addColorStop(0, `rgba(${color}, 0)`);
+        gradient.addColorStop(0.3, `rgba(${color}, 0.3)`);
+        gradient.addColorStop(landscape, `rgba(${color}, 1)`);
+        gradient.addColorStop(1, `rgba(${color}, 0)`);
+        ctx.beginPath();
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, top, Math.ceil(clipExtent.getWidth()) * r, Math.ceil(h + fogThickness));
     }
 
     _getAllLayerToRender() {
@@ -643,7 +715,7 @@ class MapCanvasRenderer extends MapRenderer {
         const map = this.map,
             mapSize = map.getSize(),
             canvas = this.canvas,
-            r = Browser.retina ? 2 : 1;
+            r = map.getDevicePixelRatio();
         if (mapSize['width'] * r === canvas.width && mapSize['height'] * r === canvas.height) {
             return false;
         }
@@ -696,7 +768,7 @@ class MapCanvasRenderer extends MapRenderer {
         const map = this.map;
 
         if (map.options['checkSize'] && !IS_NODE && (typeof window !== 'undefined')) {
-            this._setCheckSizeInterval(1000);
+            this._setCheckSizeInterval(map.options['checkSizeInterval']);
         }
         if (!Browser.mobile) {
             map.on('_mousemove', this._onMapMouseMove, this);
@@ -721,6 +793,10 @@ class MapCanvasRenderer extends MapRenderer {
         map.on('_spatialreferencechange', () => {
             this._spatialRefChanged = true;
         });
+
+        if (Browser.webgl && typeof document !== 'undefined') {
+            addDomEvent(document, 'visibilitychange', this._onVisibilitychange, this);
+        }
     }
 
     _onMapMouseMove(param) {
@@ -739,8 +815,20 @@ class MapCanvasRenderer extends MapRenderer {
     _getCanvasLayers() {
         return this.map._getLayers(layer => layer.isCanvasRender());
     }
+
+    _onVisibilitychange() {
+        if (document.visibilityState !== 'visible') {
+            return;
+        }
+        this.setToRedraw();
+    }
 }
 
 Map.registerRenderer('canvas', MapCanvasRenderer);
+
+Map.mergeOptions({
+    'fog' : true,
+    'fogColor' : [233, 233, 233]
+});
 
 export default MapCanvasRenderer;

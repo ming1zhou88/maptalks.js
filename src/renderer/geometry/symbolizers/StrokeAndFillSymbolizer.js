@@ -1,9 +1,11 @@
-import { getValueOrDefault } from 'core/util';
-import { isGradient as checkGradient } from 'core/util/style';
-import Canvas from 'core/Canvas';
-import Coordinate from 'geo/Coordinate';
-import PointExtent from 'geo/PointExtent';
+import { getValueOrDefault } from '../../../core/util';
+import { isGradient as checkGradient } from '../../../core/util/style';
+import Coordinate from '../../../geo/Coordinate';
+import PointExtent from '../../../geo/PointExtent';
 import CanvasSymbolizer from './CanvasSymbolizer';
+
+const TEMP_COORD0 = new Coordinate(0, 0);
+const TEMP_COORD1 = new Coordinate(0, 0);
 
 export default class StrokeAndFillSymbolizer extends CanvasSymbolizer {
 
@@ -36,7 +38,7 @@ export default class StrokeAndFillSymbolizer extends CanvasSymbolizer {
 
     symbolize(ctx, resources) {
         const style = this.style;
-        if (style['polygonOpacity'] === 0 && style['lineOpacity'] === 0) {
+        if (style['polygonOpacity'] === 0 && style['lineOpacity'] === 0 && !this.painter.isHitTesting()) {
             return;
         }
         const paintParams = this._getPaintParams();
@@ -59,7 +61,7 @@ export default class StrokeAndFillSymbolizer extends CanvasSymbolizer {
 
         if (isSplitted) {
             for (let i = 0; i < points.length; i++) {
-                Canvas.prepareCanvas(ctx, style, resources);
+                this.prepareCanvas(ctx, style, resources);
                 if (isGradient && isPath && !style['lineColor']['places']) {
                     this._createGradient(ctx, points[i], style['lineColor']);
                 }
@@ -71,7 +73,7 @@ export default class StrokeAndFillSymbolizer extends CanvasSymbolizer {
                 this.geometry._paintOn.apply(this.geometry, params);
             }
         } else {
-            Canvas.prepareCanvas(ctx, style, resources);
+            this.prepareCanvas(ctx, style, resources);
             if (isGradient && isPath && !style['lineColor']['places']) {
                 this._createGradient(ctx, points, style['lineColor']);
             }
@@ -102,17 +104,24 @@ export default class StrokeAndFillSymbolizer extends CanvasSymbolizer {
         this._extMin.y = extent['ymin'];
         this._extMax.x = extent['xmax'];
         this._extMax.y = extent['ymax'];
-        const min = map._prjToPoint(this._extMin),
-            max = map._prjToPoint(this._extMax);
+        const min = map._prjToPoint(this._extMin, undefined, TEMP_COORD0),
+            max = map._prjToPoint(this._extMax, undefined, TEMP_COORD1);
         if (!this._pxExtent) {
             this._pxExtent = new PointExtent(min, max);
         } else {
-            this._pxExtent['xmin'] = Math.min(min.x, max.x);
-            this._pxExtent['xmax'] = Math.max(min.x, max.x);
-            this._pxExtent['ymin'] = Math.min(min.y, max.y);
-            this._pxExtent['ymax'] = Math.max(min.y, max.y);
+            this._pxExtent.set(
+                Math.min(min.x, max.x),
+                Math.min(min.y, max.y),
+                Math.max(min.x, max.x),
+                Math.max(min.y, max.y)
+            );
         }
-        return this._pxExtent._expand(this.style['lineWidth'] / 2);
+        return this._pxExtent;
+    }
+
+    getFixedExtent() {
+        const t = this.style['lineWidth'] / 2;
+        return new PointExtent(-t, -t, t, t);
     }
 
     _getPaintParams() {
@@ -133,7 +142,11 @@ export default class StrokeAndFillSymbolizer extends CanvasSymbolizer {
             'lineDy' : getValueOrDefault(s['lineDy'], 0),
             'polygonFill': getValueOrDefault(s['polygonFill'], null),
             'polygonOpacity': getValueOrDefault(s['polygonOpacity'], 1),
-            'polygonPatternFile': getValueOrDefault(s['polygonPatternFile'], null)
+            'polygonPatternFile': getValueOrDefault(s['polygonPatternFile'], null),
+            'polygonPatternDx' : getValueOrDefault(s['polygonPatternDx'], 0),
+            'polygonPatternDy' : getValueOrDefault(s['polygonPatternDy'], 0),
+            'linePatternDx' : getValueOrDefault(s['linePatternDx'], 0),
+            'linePatternDy' : getValueOrDefault(s['linePatternDy'], 0)
         };
         if (result['lineWidth'] === 0) {
             result['lineOpacity'] = 0;
@@ -146,7 +159,7 @@ export default class StrokeAndFillSymbolizer extends CanvasSymbolizer {
     }
 
     _createGradient(ctx, points, lineColor) {
-        if (!Array.isArray(points)) {
+        if (!Array.isArray(points) || !points.length) {
             return;
         }
         const len = points.length;

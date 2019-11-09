@@ -7,7 +7,10 @@ describe('Geometry.Polygon', function () {
     var canvasContainer;
 
     beforeEach(function () {
-        var setups = COMMON_CREATE_MAP(center);
+        var setups = COMMON_CREATE_MAP(center, null, {
+            width : 800,
+            height : 600
+        });
         container = setups.container;
         map = setups.map;
         layer = new maptalks.VectorLayer('id');
@@ -243,7 +246,9 @@ describe('Geometry.Polygon', function () {
             new maptalks.Coordinate([center.x + 0.002, center.y])
         ]], {
             symbol: {
-                'lineWidth': 6
+                'lineWidth': 6,
+                'polygonOpacity' : 0,
+                'lineOpacity' : 0
             }
         });
         layer.addGeometry(geometry);
@@ -252,7 +257,7 @@ describe('Geometry.Polygon', function () {
         geometry.on('click', spy);
 
         happen.click(canvasContainer, {
-            clientX: 400 + 8 - 3,
+            clientX: 400 + 8 - 6,
             clientY: 300 + 8
         });
         expect(spy.called).to.not.be.ok();
@@ -288,28 +293,45 @@ describe('Geometry.Polygon', function () {
         expect(spy.called).to.be.ok();
     });
 
-    it('can be a anti-meridian polygon', function () {
-        var points = [
-            [[179, 10], [-170, 10], [-169, -10], [179, -10]],
-            [[180, 5], [-175, 5], [-171, -5], [180, -5]]
-        ];
-        var vector = new maptalks.Polygon(points, { antiMeridian : 'continuous', });
-        layer.addGeometry(vector);
+    describe('smoothness', function () {
+        it('draw 3 points with smoothness', function () {
+            layer.config('drawImmediate', true);
+            var center = map.getCenter();
+            var line = new maptalks.Polygon([
+                    center.sub(0.001, 0),
+                    center.add(0.001, 0),
+                    center.add(0.001, -0.001)
+                ], {
+                smoothness : 0.5,
+                symbol : {
+                    'lineColor' : '#000',
+                    'lineWidth' : 8
+                }
+            }).addTo(layer);
+            expect(layer).not.to.be.painted(0, 0);
+            expect(layer).to.be.painted(0, -10);
+        });
+    });
 
-        var points2 = [
-            [[179, 10], [168, 10], [167, -10], [179, -10]]
-        ];
-        var comparison = new maptalks.Polygon(points2);
-        layer.addGeometry(comparison);
-
-        var size = vector.getSize();
-        var compared = comparison.getSize();
-        expect(size.width).to.be.approx(compared.width);
-        expect(size.height).to.be.approx(compared.height);
-
-        // expect(vector.getLength()).to.be.eql(comparison.getLength());
-
-        // expect(vector.getArea()).to.be.eql(comparison.getArea());
+    describe('outline', function () {
+        it('display outline', function () {
+            map.config('centerCross', true);
+            layer.config('drawImmediate', true);
+            var center = map.getCenter();
+            var line = new maptalks.Polygon([
+                    center.sub(0.001, 0),
+                    center.add(0.001, 0),
+                    center.add(0.001, -0.001)
+                ], {
+                symbol : {
+                    'lineColor' : '#000',
+                    'lineWidth' : 8
+                }
+            }).addTo(layer);
+            var outline = line.getOutline().updateSymbol({ polygonFill : '#0f0' }).addTo(layer);
+            expect(layer).not.to.be.painted(0, -20);
+            expect(layer).to.be.painted(0, 10, [0, 255, 0]);
+        });
     });
 
     describe('animateShow', function () {

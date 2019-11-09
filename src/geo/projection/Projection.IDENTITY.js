@@ -1,4 +1,4 @@
-import { extend } from 'core/util';
+import { extend } from '../../core/util';
 import Common from './Projection';
 import { Identity } from '../measurer';
 
@@ -20,10 +20,20 @@ export default extend({}, Common, /** @lends projection.IDENTITY */ {
      * @constant
      */
     code: 'IDENTITY',
-    project: function (p) {
+    project: function (p, out) {
+        if (out) {
+            out.x = p.x;
+            out.y = p.y;
+            return out;
+        }
         return p.copy();
     },
-    unproject: function (p) {
+    unproject: function (p, out) {
+        if (out) {
+            out.x = p.x;
+            out.y = p.y;
+            return out;
+        }
         return p.copy();
     }
 }, Identity);

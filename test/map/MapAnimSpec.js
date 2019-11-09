@@ -14,7 +14,7 @@ describe('Map.Anim', function () {
             zoom: 17,
             center: center,
             baseLayer : new maptalks.TileLayer('tile', {
-                urlTemplate:'/resources/tile.png',
+                urlTemplate : TILE_IMAGE,
                 subdomains: [1, 2, 3],
                 renderer:'canvas'
             })
@@ -81,28 +81,72 @@ describe('Map.Anim', function () {
         });
     });
 
-    it('interupt animateTo', function (done) {
-        var center = map.getCenter().add(0.1, 0.1);
-        var zoom = map.getZoom() - 4;
-        var pitch = map.getPitch() + 10;
-        var bearing = map.getBearing() + 60;
-        map.on('animateinterupted', function () {
-            expect(map.getCenter().toArray()).not.to.be.closeTo(center.toArray());
-            expect(map.getZoom()).to.be.eql(zoom);
-            expect(map.getPitch()).not.to.be.eql(pitch);
-            expect(map.getBearing()).not.to.be.eql(bearing);
+    it('disable zoom by zoomable', function (done) {
+        map.config('zoomable', false);
+        var cur = map.getZoom();
+        var zoom = map.getZoom() - 5;
+        map.getBaseLayer().config('durationToAnimate', 300);
+        map.on('animateend', function () {
+            expect(map.getZoom()).to.be.eql(cur);
             done();
         });
         map.animateTo({
-            center : center,
-            zoom : zoom,
-            pitch : pitch,
-            bearing : bearing
+            zoom : zoom
         }, {
-            'duration' : 200
+            'duration' : 300
+        });
+    });
+
+    // it('interrupt animateTo by _stopAnim', function (done) {
+    //     var center = map.getCenter().add(0.1, 0.1);
+    //     var zoom = map.getZoom() - 4;
+    //     // var pitch = map.getPitch() + 10;
+    //     var bearing = map.getBearing() + 60;
+    //     map.on('animateinterrupted', function () {
+    //         expect(map.getCenter().toArray()).not.to.be.closeTo(center.toArray());
+    //         expect(map.getZoom()).not.to.be.eql(zoom);
+    //         expect(map.getPitch()).not.to.be.eql(pitch);
+    //         expect(map.getBearing()).not.to.be.eql(bearing);
+    //         done();
+    //     });
+    //     var player = map.animateTo({
+    //         center : center,
+    //         zoom : zoom,
+    //         // pitch : pitch,
+    //         bearing : bearing
+    //     }, {
+    //         'duration' : 200
+    //     });
+    //     setTimeout(function () {
+    //         map._stopAnim(player);
+    //     }, 100);
+    // });
+
+    it('interupt animateTo by scrollZoom', function (done) {
+        map.config('zoomAnimationDuration', 100);
+        var cur = map.getZoom();
+        var zoom = map.getZoom() - 4;
+        map.on('animateinterupted', function () {
+            expect(map.getZoom()).not.to.be.eql(zoom);
+        });
+        var zoomendCount = 0;
+        map.on('zoomend', function () {
+            zoomendCount++;
+            if (zoomendCount === 2) {
+                //zoomend fired by scrollzoom
+                done();
+            }
+        });
+        map.animateTo({
+            zoom : zoom
+        }, {
+            'duration' : 2000
         });
         setTimeout(function () {
-            map.setCenter(map.getCenter().add(-0.1, 0));
+            happen.once(container, {
+                type: (maptalks.Browser.gecko ? 'DOMMouseScroll' : 'mousewheel'),
+                detail: 100
+            });
         }, 100);
     });
 });

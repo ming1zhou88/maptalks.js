@@ -1,8 +1,7 @@
-import { isString } from 'core/util';
-import Point from 'geo/Point';
-import Coordinate from 'geo/Coordinate';
-import Extent from 'geo/Extent';
-import Transformation from 'geo/transformation/Transformation';
+import { isString } from '../../../core/util';
+import Coordinate from '../../../geo/Coordinate';
+import Extent from '../../../geo/Extent';
+import Transformation from '../../../geo/transformation/Transformation';
 import TileSystem from './TileSystem';
 
 /**
@@ -22,6 +21,8 @@ class TileConfig {
         this.tileSize = tileSize;
         this.fullExtent = fullExtent;
         this.prepareTileInfo(tileSystem, fullExtent);
+        this._xScale = fullExtent['right'] >= fullExtent['left'] ? 1 : -1;
+        this._yScale = fullExtent['top'] >= fullExtent['bottom'] ? 1 : -1;
     }
 
     prepareTileInfo(tileSystem, fullExtent) {
@@ -50,7 +51,7 @@ class TileConfig {
      * @param  {Number} res  - current resolution
      * @return {Object}       tile index
      */
-    getTileIndex(point, res) {
+    _getTileNum(point, res) {
         const tileSystem = this.tileSystem,
             tileSize = this['tileSize'],
             delta = 1E-7;
@@ -69,17 +70,17 @@ class TileConfig {
      * @param  {Number} res - current resolution
      * @return {Object}   tile index and offset
      */
-    getCenterTile(pCoord, res) {
-        const tileSystem = this.tileSystem,
-            tileSize = this['tileSize'];
+    getTileIndex(pCoord, res) {
+        const tileSystem = this.tileSystem;
+        // tileSize = this['tileSize'];
         const point = this.transformation.transform(pCoord, 1);
-        let tileIndex = this.getTileIndex(point, res);
+        const tileIndex = this._getTileNum(point, res);
 
-        const tileLeft = tileIndex['x'] * tileSize['width'];
-        const tileTop = tileIndex['y'] * tileSize['height'];
+        // const tileLeft = tileIndex['x'] * tileSize['width'];
+        // const tileTop = tileIndex['y'] * tileSize['height'];
 
-        const offsetLeft = point.x / res - tileSystem['scale']['x'] * tileLeft;
-        const offsetTop = point.y / res + tileSystem['scale']['y'] * tileTop;
+        // const offsetLeft = point.x / res - tileSystem['scale']['x'] * tileLeft;
+        // const offsetTop = point.y / res + tileSystem['scale']['y'] * tileTop;
 
         //如果x方向为左大右小
         if (tileSystem['scale']['x'] < 0) {
@@ -91,13 +92,7 @@ class TileConfig {
         }
 
         //有可能tileIndex超出世界范围
-        tileIndex = this.getNeighorTileIndex(tileIndex['x'], tileIndex['y'], 0, 0, true);
-
-        return {
-            'x': tileIndex['x'],
-            'y': tileIndex['y'],
-            'offset': new Point(offsetLeft, offsetTop)
-        };
+        return this.getNeighorTileIndex(tileIndex['x'], tileIndex['y'], 0, 0, res);
     }
 
     /**
@@ -109,32 +104,45 @@ class TileConfig {
      * @param  {Number} zoomLevel
      * @return {Object}  tile's neighbor index
      */
-    getNeighorTileIndex(tileX, tileY, offsetX, offsetY, res, isRepeatWorld) {
+    getNeighorTileIndex(tileX, tileY, offsetX, offsetY, res, repeatWorld) {
         const tileSystem = this.tileSystem;
         let x = (tileX + tileSystem['scale']['x'] * offsetX);
         let y = (tileY - tileSystem['scale']['y'] * offsetY);
+        let out = false;
         const idx = x;
         const idy = y;
-        if (isRepeatWorld) {
-            //caculate tile index to request in url in repeated world.
-            const ext = this._getTileFullIndex(res);
-            if (x < ext['xmin']) {
-                x = ext['xmax'] - (ext['xmin'] - x) % (ext['xmax'] - ext['xmin']);
-                if (x === ext['xmax']) {
+
+        const ext = this._getTileFullIndex(res);
+        if (repeatWorld) {
+            if (repeatWorld === true || repeatWorld === 'x') {
+                //caculate tile index to request in url in repeated world.
+                if (ext['xmax'] === ext['xmin']) {
                     x = ext['xmin'];
+                } else if (x < ext['xmin']) {
+                    x = ext['xmax'] - (ext['xmin'] - x) % (ext['xmax'] - ext['xmin']);
+                    if (x === ext['xmax']) {
+                        x = ext['xmin'];
+                    }
+                } else if (x >= ext['xmax']) {
+                    x = ext['xmin'] + (x - ext['xmin']) % (ext['xmax'] - ext['xmin']);
                 }
-            } else if (x >= ext['xmax']) {
-                x = ext['xmin'] + (x - ext['xmin']) % (ext['xmax'] - ext['xmin']);
             }
 
-            if (y >= ext['ymax']) {
-                y = ext['ymin'] + (y - ext['ymin']) % (ext['ymax'] - ext['ymin']);
-            } else if (y < ext['ymin']) {
-                y = ext['ymax'] - (ext['ymin'] - y) % (ext['ymax'] - ext['ymin']);
-                if (y === ext['ymax']) {
+            if (repeatWorld === true || repeatWorld === 'y') {
+                if (ext['ymax'] === ext['ymin']) {
                     y = ext['ymin'];
+                } else if (y >= ext['ymax']) {
+                    y = ext['ymin'] + (y - ext['ymin']) % (ext['ymax'] - ext['ymin']);
+                } else if (y < ext['ymin']) {
+                    y = ext['ymax'] - (ext['ymin'] - y) % (ext['ymax'] - ext['ymin']);
+                    if (y === ext['ymax']) {
+                        y = ext['ymin'];
+                    }
                 }
             }
+        }
+        if (x < ext['xmin'] || x > ext['xmax'] || y > ext['ymax'] || y < ext['ymin']) {
+            out = true;
         }
         return {
             // tile index to request in url
@@ -142,48 +150,72 @@ class TileConfig {
             'y': y,
             // real tile index
             'idx' : idx,
-            'idy' : idy
+            'idy' : idy,
+            out
         };
     }
 
     _getTileFullIndex(res) {
         const ext = this.fullExtent;
         const transformation = this.transformation;
-        const nwIndex = this.getTileIndex(transformation.transform(new Coordinate(ext['left'], ext['top']), 1), res);
-        const seIndex = this.getTileIndex(transformation.transform(new Coordinate(ext['right'], ext['bottom']), 1), res);
+        const nwIndex = this._getTileNum(transformation.transform(new Coordinate(ext['left'], ext['top']), 1), res);
+        const seIndex = this._getTileNum(transformation.transform(new Coordinate(ext['right'], ext['bottom']), 1), res);
+
+        const tileSystem = this.tileSystem;
+        //如果x方向为左大右小
+        if (tileSystem['scale']['x'] < 0) {
+            nwIndex.x -= 1;
+            seIndex.x -= 1;
+        }
+        //如果y方向上大下小
+        if (tileSystem['scale']['y'] > 0) {
+            nwIndex.y -= 1;
+            seIndex.y -= 1;
+        }
         return new Extent(nwIndex, seIndex);
     }
 
     /**
-     * Get tile's south west's projected coordinate
+     * Get tile's north west's projected coordinate
      * @param  {Number} tileX
      * @param  {Number} tileY
      * @param  {Number} res
-     * @return {Object}
+     * @return {Number[]}
      */
-    getTileProjectedSw(tileX, tileY, res) {
+    getTilePrjNW(tileX, tileY, res) {
         const tileSystem = this.tileSystem;
         const tileSize = this['tileSize'];
-        const y = tileSystem['origin']['y'] + tileSystem['scale']['y'] * (tileY + (tileSystem['scale']['y'] === 1 ? 0 : 1)) * (res * tileSize['height']);
-        const x = tileSystem['scale']['x'] * (tileX + (tileSystem['scale']['x'] === 1 ? 0 : 1)) * res * tileSize['width'] + tileSystem['origin']['x'];
-        return [x, y];
+        const y = tileSystem['origin']['y'] + this._yScale * tileSystem['scale']['y'] * (tileY + (tileSystem['scale']['y'] === 1 ? 1 : 0)) * res * tileSize['height'];
+        const x = tileSystem['origin']['x'] + this._xScale * tileSystem['scale']['x'] * (tileX + (tileSystem['scale']['x'] === 1 ? 0 : 1)) * res * tileSize['width'];
+        return new Coordinate(x, y);
     }
 
     /**
-     * Get tile's extent
+     * Get tile's south east's projected coordinate
+     * @param  {Number} tileX
+     * @param  {Number} tileY
+     * @param  {Number} res
+     * @return {Number[]}
+     */
+    getTilePrjSE(tileX, tileY, res) {
+        const tileSystem = this.tileSystem;
+        const tileSize = this['tileSize'];
+        const y = tileSystem['origin']['y'] + this._yScale * tileSystem['scale']['y'] * (tileY + (tileSystem['scale']['y'] === 1 ? 0 : 1)) * res * tileSize['height'];
+        const x = tileSystem['origin']['x'] + this._xScale * tileSystem['scale']['x'] * (tileX + (tileSystem['scale']['x'] === 1 ? 1 : 0)) * res * tileSize['width'];
+        return new Coordinate(x, y);
+    }
+
+    /**
+     * Get tile's projected extent
      * @param  {Number} tileX
      * @param  {Number} tileY
      * @param  {Number} res
      * @return {Extent}
      */
     getTilePrjExtent(tileX, tileY, res) {
-        const tileSize = this['tileSize'],
-            sw = new Coordinate(this.getTileProjectedSw(tileX, tileY, res));
-        const sx = this.transformation.matrix[0],
-            sy = this.transformation.matrix[1];
-        const x = sw.x + sx * (res * tileSize['width']),
-            y = sw.y - sy * (res * tileSize['height']);
-        return new Extent(sw, new Coordinate(x, y));
+        const nw = this.getTilePrjNW(tileX, tileY, res),
+            se = this.getTilePrjSE(tileX, tileY, res);
+        return new Extent(nw, se);
     }
 }
 

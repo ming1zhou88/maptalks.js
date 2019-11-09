@@ -1,5 +1,5 @@
 import GeometryCollection from './GeometryCollection';
-import Coordinate from 'geo/Coordinate';
+import Coordinate from '../geo/Coordinate';
 
 /**
  * The parent class for MultiPoint, MultiLineString and MultiPolygon
@@ -30,7 +30,8 @@ class MultiGeometry extends GeometryCollection {
         const coordinates = [];
         const geometries = this.getGeometries();
         for (let i = 0, l = geometries.length; i < l; i++) {
-            coordinates.push(geometries[i].getCoordinates());
+            const child = geometries[i];
+            coordinates.push(child.getShell && child.getJSONType() !== 'Polygon' ? [child.getShell()] : child.getCoordinates());
         }
         return coordinates;
     }

@@ -1,16 +1,16 @@
-import { extend, isNil, isString, isInteger, hasOwn } from 'core/util';
-import Coordinate from 'geo/Coordinate';
-import Extent from 'geo/Extent';
-import * as projections from 'geo/projection';
-import Transformation from 'geo/transformation/Transformation';
-import { Measurer } from 'geo/measurer';
+import { extend, isNil, isObject, hasOwn, sign } from '../../core/util';
+import Coordinate from '../../geo/Coordinate';
+import Extent from '../../geo/Extent';
+import * as projections from '../../geo/projection';
+import Transformation from '../../geo/transformation/Transformation';
+import { Measurer } from '../../geo/measurer';
 
-const DefaultSpatialRef = {
+const DefaultSpatialReference = {
     'EPSG:3857': {
         'resolutions': (function () {
             const resolutions = [];
             const d = 2 * 6378137 * Math.PI;
-            for (let i = 0; i < 20; i++) {
+            for (let i = 0; i < 21; i++) {
                 resolutions[i] = d / (256 * Math.pow(2, i));
             }
             return resolutions;
@@ -45,9 +45,6 @@ const DefaultSpatialRef = {
                 resolutions[i] = res;
                 res *= 0.5;
             }
-            resolutions[0] = null;
-            resolutions[1] = null;
-            resolutions[2] = null;
             return resolutions;
         })(),
         'fullExtent': {
@@ -56,10 +53,27 @@ const DefaultSpatialRef = {
             'bottom': -33554432,
             'right': 33554432
         }
+    },
+    'IDENTITY' : {
+        'resolutions': (function () {
+            let res = Math.pow(2, 8);
+            const resolutions = [];
+            for (let i = 0; i < 18; i++) {
+                resolutions[i] = res;
+                res *= 0.5;
+            }
+            return resolutions;
+        })(),
+        'fullExtent': {
+            'top': 200000,
+            'left': -200000,
+            'bottom': -200000,
+            'right': 200000
+        }
     }
 };
 
-DefaultSpatialRef['EPSG:4490'] = DefaultSpatialRef['EPSG:4326'];
+DefaultSpatialReference['EPSG:4490'] = DefaultSpatialReference['EPSG:4326'];
 
 export default class SpatialReference {
     constructor(options = {}) {
@@ -67,25 +81,65 @@ export default class SpatialReference {
         this._initSpatialRef();
     }
 
+    static getProjectionInstance(prjName) {
+        if (!prjName) {
+            return null;
+        }
+        if (isObject(prjName)) {
+            return prjName;
+        }
+        prjName = (prjName + '').toLowerCase();
+        for (const p in projections) {
+            if (hasOwn(projections, p)) {
+                const code = projections[p]['code'];
+                if (code && code.toLowerCase() === prjName) {
+                    return projections[p];
+                }
+            }
+        }
+        return null;
+    }
+
+    static equals(sp1, sp2) {
+        if (!sp1 && !sp2) {
+            return true;
+        } else if (!sp1 || !sp2) {
+            return false;
+        }
+        if (sp1.projection !== sp2.projection) {
+            return false;
+        }
+        const f1 = sp1.fullExtent, f2 = sp2.fullExtent;
+        if (f1 && !f2 || !f1 && f2) {
+            return false;
+        }
+        if (f1 && f2) {
+            if (f1.top !== f2.top || f1.bottom !== f2.bottom || f1.left !== f2.left || f1.right !== f2.right) {
+                return false;
+            }
+        }
+        const r1 = sp1.resolutions, r2 = sp2.resolutions;
+        if (r1 && r2) {
+            if (r1.length !== r2.length) {
+                return false;
+            }
+            for (let i = 0; i < r1.length; i++) {
+                if (r1[i] !== r2[i]) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     _initSpatialRef() {
         let projection = this.options['projection'];
         if (projection) {
-            if (isString(projection)) {
-                const prjName = projection.toLowerCase();
-                for (const p in projections) {
-                    if (hasOwn(projections, p)) {
-                        const regName = projections[p]['code'];
-                        if (regName && regName.toLowerCase() === prjName) {
-                            projection = projections[p];
-                            break;
-                        }
-                    }
-                }
-            }
+            projection = SpatialReference.getProjectionInstance(projection);
         } else {
             projection = projections.DEFAULT;
         }
-        if (!projection || isString(projection)) {
+        if (!projection) {
             throw new Error('must provide a valid projection in map\'s spatial reference.');
         }
         projection = extend({}, projections.Common, projection);
@@ -97,9 +151,10 @@ export default class SpatialReference {
             resolutions = this.options['resolutions'];
         if (!resolutions) {
             if (projection['code']) {
-                defaultSpatialRef = DefaultSpatialRef[projection['code']];
+                defaultSpatialRef = DefaultSpatialReference[projection['code']];
                 if (defaultSpatialRef) {
                     resolutions = defaultSpatialRef['resolutions'];
+                    this.isEPSG = projection['code'] !== 'IDENTITY';
                 }
             }
             if (!resolutions) {
@@ -110,7 +165,7 @@ export default class SpatialReference {
         let fullExtent = this.options['fullExtent'];
         if (!fullExtent) {
             if (projection['code']) {
-                defaultSpatialRef = DefaultSpatialRef[projection['code']];
+                defaultSpatialRef = DefaultSpatialReference[projection['code']];
                 if (defaultSpatialRef) {
                     fullExtent = defaultSpatialRef['fullExtent'];
                 }
@@ -157,7 +212,7 @@ export default class SpatialReference {
             z = this._resolutions.length - 1;
         }
         const res = this._resolutions[z];
-        if (!isInteger(zoom) && z !== this._resolutions.length - 1) {
+        if (z !== zoom && zoom > 0 && z < this._resolutions.length - 1) {
             const next = this._resolutions[z + 1];
             return res + (next - res) * (zoom - z);
         }
@@ -194,4 +249,23 @@ export default class SpatialReference {
         return this._resolutions.length - 1;
     }
 
+    getZoomDirection() {
+        return sign(this._resolutions[this.getMinZoom()] - this._resolutions[this.getMaxZoom()]);
+    }
+
+    toJSON() {
+        if (!this.json) {
+            this.json = {
+                'resolutions' : this._resolutions,
+                'fullExtent' : {
+                    'top': this._fullExtent.top,
+                    'left': this._fullExtent.left,
+                    'bottom': this._fullExtent.bottom,
+                    'right': this._fullExtent.right
+                },
+                'projection' : this._projection.code
+            };
+        }
+        return this.json;
+    }
 }

@@ -1,5 +1,4 @@
-import { extend } from 'core/util';
-import Browser from 'core/Browser';
+import { extend } from '../../core/util';
 import TileLayer from './TileLayer';
 
 /**
@@ -63,21 +62,27 @@ class WMSTileLayer extends TileLayer {
             }
         }
         this.setOptions(options);
-        const r = options.detectRetina && Browser.retina ? 2 : 1,
-            tileSize = this.getTileSize();
-        wmsParams.width = tileSize.width * r;
-        wmsParams.height = tileSize.height * r;
+        this.setZIndex(options.zIndex);
+        const tileSize = this.getTileSize();
+        wmsParams.width = tileSize.width;
+        wmsParams.height = tileSize.height;
         this.wmsParams = wmsParams;
         this._wmsVersion = parseFloat(wmsParams.version);
     }
 
     onAdd() {
-        this.wmsParams.crs = this.options.crs || this.getMap().getProjection().code;
+        const dpr = this.getMap().getDevicePixelRatio();
+        const r = options.detectRetina ? dpr : 1;
+        this.wmsParams.width *= r;
+        this.wmsParams.height *= r;
+        const crs = this.options.crs || this.getMap().getProjection().code;
+        const projectionKey = this._wmsVersion >= 1.3 ? 'crs' : 'srs';
+        this.wmsParams[projectionKey] = crs;
+        super.onAdd();
     }
 
     getTileUrl(x, y, z) {
-        const map = this.getMap(),
-            res = map._getResolution(z),
+        const res = this.getSpatialReference().getResolution(z),
             tileConfig = this._getTileConfig(),
             tileExtent = tileConfig.getTilePrjExtent(x, y, res);
         const max = tileExtent.getMax(),

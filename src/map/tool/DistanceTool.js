@@ -1,10 +1,10 @@
-import { isArrayHasData, UID } from 'core/util';
-import { extendSymbol } from 'core/util/style';
-import Size from 'geo/Size';
-import Geometry from 'geometry/Geometry';
-import Marker from 'geometry/Marker';
-import Label from 'geometry/Label';
-import VectorLayer from 'layer/VectorLayer';
+import { isArrayHasData, UID } from '../../core/util';
+import { extendSymbol } from '../../core/util/style';
+import Size from '../../geo/Size';
+import Geometry from '../../geometry/Geometry';
+import Marker from '../../geometry/Marker';
+import Label from '../../geometry/Label';
+import VectorLayer from '../../layer/VectorLayer';
 import DrawTool from './DrawTool';
 
 /**
@@ -213,6 +213,7 @@ class DistanceTool extends DrawTool {
         }).addTo(this._measureMarkerLayer);
         const content = (this.options['language'] === 'zh-CN' ? '起点' : 'start');
         const startLabel = new Label(content, param['coordinate'], this.options['labelOptions']);
+        this._lastVertex = startLabel;
         this._measureMarkerLayer.addGeometry(startLabel);
     }
 

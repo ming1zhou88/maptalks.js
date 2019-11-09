@@ -1,4 +1,4 @@
-describe('VectorLayer', function () {
+describe('VectorLayer.Spec', function () {
 
     var container;
     var map;
@@ -7,8 +7,8 @@ describe('VectorLayer', function () {
 
     beforeEach(function () {
         container = document.createElement('div');
-        container.style.width = '800px';
-        container.style.height = '600px';
+        container.style.width = '50px';
+        container.style.height = '50px';
         document.body.appendChild(container);
         var option = {
             zoom: 17,
@@ -127,7 +127,26 @@ describe('VectorLayer', function () {
                 map.zoomOut();
             });
             expect(function () {
-                layer.addGeometry(geometries, true);
+                layer.addGeometry(geometries);
+            }).to.not.throwException();
+        });
+
+        it('all type of geometry in seamlessZoom', function (done) {
+            map.config('seamlessZoom', true);
+            layer.on('forceRenderOnZooming', true);
+            layer.on('drawImmediate', true);
+            var geometries = GEN_GEOMETRIES_OF_ALL_TYPES();
+            map.on('zoomend', function () {
+                done();
+            });
+            var count = 0;
+            layer.on('layerload', function () {
+                count++;
+                map.zoomOut();
+
+            });
+            expect(function () {
+                layer.addGeometry(geometries);
             }).to.not.throwException();
         });
 
@@ -175,6 +194,23 @@ describe('VectorLayer', function () {
             layer = new maptalks.VectorLayer('v', collection);
             expect(layer.getCount()).to.be.eql(collection.features.length);
         });
+
+        it('add geojson and paint', function (done) {
+            var geos = [
+                {
+                    type: "Feature",
+                    geometry: {
+                        "type": "Point",
+                        "coordinates": map.getCenter().toArray()
+                    }
+              }
+            ];
+            layer.on('layerload', function () {
+                expect(layer).to.be.painted(0, -1);
+                done();
+            });
+            layer.addGeometry(geos);
+        });
     });
 
     describe('paint geometry', function () {
@@ -196,6 +232,37 @@ describe('VectorLayer', function () {
             layer.on('layerload', function () {
                 expect(layer).to.be.painted(0, 0, [255, 0, 0]);
                 done();
+            });
+            layer.addGeometry(circle);
+        });
+
+        it('repaint when map resized', function (done) {
+            map.getRenderer()._setCheckSizeInterval(80);
+
+            var circle = new maptalks.Circle(map.getCenter(), 100, {
+                symbol : {
+                    'polygonFill' : '#f00'
+                }
+            });
+            layer.once('layerload', function () {
+                var sx = 1, sy = 1;
+                var scaleFn = layer.getRenderer().context.scale;
+                layer.getRenderer().context.scale = function (x, y) {
+                    sx = x;
+                    sy = y;
+                    scaleFn.call(this, x, y);
+                };
+                layer.once('layerload', function () {
+                    maptalks.Browser.retina = false;
+                    expect(sx).to.be.eql(2);
+                    expect(sy).to.be.eql(2);
+                    maptalks.Browser.devicePixelRatio = 1;
+                    maptalks.Browser.retina = false;
+                    done();
+                });
+                maptalks.Browser.devicePixelRatio = 2;
+                maptalks.Browser.retina = true;
+                container.style.width = (parseInt(container.style.width) - 1) + 'px';
             });
             layer.addGeometry(circle);
         });
