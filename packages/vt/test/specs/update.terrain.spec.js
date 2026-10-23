@@ -1,0 +1,231 @@
+const assert = require('assert');
+const { readPixel } = require('../common/Util');
+const maptalks = require('maptalks');
+const { GeoJSONVectorTileLayer } = require('../../dist/maptalks.vt.js');
+const { GroupGLLayer } = require('@maptalks/gl');
+require('@maptalks/gpu');
+const startServer = require('./server.js');
+const PORT = 4398;
+
+const mapRenderer = window.mapRenderer;
+
+maptalks.Map.mergeOptions({
+    renderer: mapRenderer || 'gl',
+    preserveGpuDrawingBuffer: true
+});
+
+const DEFAULT_VIEW = {
+    center: [91.14478,29.658272],
+    zoom: 12,
+    pitch: 0,
+    bearing: 0,
+    devicePixelRatio: 1,
+    lights: {
+        ambient: {
+            color: [0.1, 0.1, 0.1]
+        },
+        directional: {
+            color: [0.1, 0.1, 0.1],
+            direction: [1, 0, -1],
+        }
+    }
+};
+
+const line = {
+    type: 'FeatureCollection',
+    features: [
+        { type: 'Feature', id: 0, geometry: { type: 'LineString', coordinates: [[91.13178,29.658272], [91.15678,29.658272]] }, properties: { type: 1 } }
+    ]
+};
+
+const terrain = {
+    type: 'mapbox',
+    tileSize: 512,
+    urlTemplate: 'http://localhost:' + PORT + '/mapbox-terrain/{z}/{x}/{y}.webp',
+    tileStackDepth: 0,
+    tileLimitPerFrame: 0,
+    requireSkuToken: false,
+    fadeAnimation: false,
+    shader: 'lit'
+};
+
+describe('update vt on terrain specs', () => {
+    let container, map, server;
+    before(done => {
+        container = document.createElement('div');
+        container.style.width = '512px';
+        container.style.height = '512px';
+        document.body.appendChild(container);
+        server = startServer(PORT, done);
+    });
+
+    beforeEach(() => {
+        map = new maptalks.Map(container, DEFAULT_VIEW);
+    });
+
+    afterEach(() => {
+        map.remove();
+    });
+
+    after(() => {
+        server.close();
+    });
+
+
+    context('should can update terrain with line render plugin, fuzhenn/maptalks-ide#3152', () => {
+
+        const lineTerrainRunner = (done, isPostProcessOn) => {
+            const style = [
+                {
+                    filter: true,
+                    renderPlugin: {
+                        type: 'line',
+                        dataConfig: { type: 'line' },
+                    },
+                    symbol: { lineColor: '#f00', lineWidth: 8, lineOpacity: 1 }
+                }
+            ];
+            const layer = new GeoJSONVectorTileLayer('gvt', {
+                tileLimitPerFrame: 0,
+                data: line,
+                style,
+                tileStackDepth: 0,
+                loadingLimit: 0
+            });
+            const sceneConfig = {
+                postProcess: {
+                    enable: !!isPostProcessOn,
+                    antialias: { enable: true }
+                }
+            };
+            const group = new GroupGLLayer('group', [layer], { sceneConfig });
+            const renderer = map.getRenderer();
+            const x = renderer.canvas.width, y = renderer.canvas.height;
+            setTimeout(() => {
+                group.setTerrain(terrain);
+            }, 100);
+            setTimeout(() => {
+                let pixel = readPixel(renderer.canvas, x / 2, y / 2);
+                assert.deepEqual(pixel, [255, 0, 0, 255]);
+                done();
+            }, 3000);
+            group.addTo(map);
+        }
+        it('without post process', done => {
+            lineTerrainRunner(done, false);
+        });
+
+        it('with post process', done => {
+            lineTerrainRunner(done, true);
+        });
+
+    });
+
+    it('should can setIndex on terrain, maptalks/issues#939', done => {
+        const styleRed = [
+            {
+                filter: true,
+                renderPlugin: {
+                    type: 'line',
+                    dataConfig: { type: 'line' },
+                },
+                symbol: { lineColor: '#f00', lineWidth: 8, lineOpacity: 1 }
+            }
+        ];
+        const styleGreen = [
+            {
+                filter: true,
+                renderPlugin: {
+                    type: 'line',
+                    dataConfig: { type: 'line' },
+                },
+                symbol: { lineColor: '#0f0', lineWidth: 8, lineOpacity: 1 }
+            }
+        ];
+        const layerRed = new GeoJSONVectorTileLayer('gvt0', {
+            tileLimitPerFrame: 0,
+            data: line,
+            style: styleRed,
+            tileStackDepth: 0,
+            loadingLimit: 0
+        });
+        const layerGreen = new GeoJSONVectorTileLayer('gvt1', {
+            tileLimitPerFrame: 0,
+            data: line,
+            style: styleGreen,
+            tileStackDepth: 0,
+            loadingLimit: 0
+        });
+        const group = new GroupGLLayer('group', [layerGreen, layerRed], { terrain });
+        group.addTo(map);
+        const renderer = map.getRenderer();
+        const x = renderer.canvas.width, y = renderer.canvas.height;
+        setTimeout(() => {
+            let pixel = readPixel(renderer.canvas, x / 2, y / 2);
+            assert.deepEqual(pixel, [255, 0, 0, 255]);
+            layerGreen.setZIndex(1);
+            setTimeout(() => {
+                let pixel = readPixel(renderer.canvas, x / 2, y / 2);
+                assert.deepEqual(pixel, [0, 255, 0, 255]);
+                done();
+            }, 1000);
+        }, 3000);
+    });
+
+    it('should can remove layer on terrain, maptalks/issues#939', done => {
+        const styleRed = [
+            {
+                filter: true,
+                renderPlugin: {
+                    type: 'line',
+                    dataConfig: { type: 'line' },
+                },
+                symbol: { lineColor: '#f00', lineWidth: 8, lineOpacity: 1 }
+            }
+        ];
+        const styleGreen = [
+            {
+                filter: true,
+                renderPlugin: {
+                    type: 'line',
+                    dataConfig: { type: 'line' },
+                },
+                symbol: { lineColor: '#0f0', lineWidth: 8, lineOpacity: 1 }
+            }
+        ];
+        const layerRed = new GeoJSONVectorTileLayer('gvt-red', {
+            tileLimitPerFrame: 0,
+            data: line,
+            style: styleRed,
+            tileStackDepth: 0,
+            loadingLimit: 0
+        });
+        const layerGreen = new GeoJSONVectorTileLayer('gvt-green', {
+            tileLimitPerFrame: 0,
+            data: line,
+            style: styleGreen,
+            tileStackDepth: 0,
+            loadingLimit: 0
+        });
+        const group = new GroupGLLayer('group', [layerGreen, layerRed], { terrain });
+        group.addTo(map);
+        const renderer = map.getRenderer();
+        const x = renderer.canvas.width, y = renderer.canvas.height;
+        setTimeout(() => {
+            let pixel = readPixel(renderer.canvas, x / 2, y / 2);
+            assert.deepEqual(pixel, [255, 0, 0, 255]);
+            const terrainRenderer = group.getTerrainLayer().getRenderer();
+            const tiles = terrainRenderer.tilesInView;
+            assert(Object.values(tiles)[0].image.skinImages[layerRed.getId()] !== undefined);
+            layerRed.remove();
+            setTimeout(() => {
+                assert(Object.values(tiles)[0].image.skinImages[layerRed.getId()] === undefined);
+                let pixel = readPixel(renderer.canvas, x / 2, y / 2);
+                assert.deepEqual(pixel, [0, 255, 0, 255]);
+                done();
+            }, 1000);
+        }, 3000);
+    });
+
+});
+

@@ -1,0 +1,180 @@
+import { reshader, mat4, getWGSLSource } from '@maptalks/gl';
+import { setUniformFromSymbol, createColorSetter } from '../Util';
+import BasicPainter from './BasicPainter';
+import vert from './glsl/native-line.vert';
+import frag from './glsl/native-line.frag';
+import pickingVert from './glsl/native-line.vert';
+import { piecewiseConstant, isFunctionDefinition } from '@maptalks/function-type';
+import { MapStateCache } from 'maptalks';
+
+const IDENTITY_ARR = mat4.identity([]);
+
+class NativeLinePainter extends BasicPainter {
+    constructor(regl, layer, symbol, sceneConfig, pluginIndex, dataConfig) {
+        super(regl, layer, symbol, sceneConfig, pluginIndex, dataConfig);
+        this.primitive = 'lines';
+        if (isFunctionDefinition(this.symbolDef['lineColor'])) {
+            const map = layer.getMap();
+            const fn = piecewiseConstant(this.symbolDef['lineColor']);
+            this.colorSymbol = properties => {
+                const cache = MapStateCache[map.id];
+                const zoom = cache ? cache.zoom : map.getZoom();
+                return fn(zoom, properties)
+            }
+        }
+    }
+
+    needPolygonOffset() {
+        return true;
+    }
+
+    createMesh(geo, transform) {
+        const { geometry, symbolIndex, ref } = geo;
+        const symbol = this.getSymbol(symbolIndex);
+        const uniforms = this.getMeshUniforms(geometry, symbol);
+        if (ref === undefined) {
+            geometry.generateBuffers(this.regl);
+        }
+        const material = new reshader.Material(uniforms);
+        const mesh = new reshader.Mesh(geometry, material, {
+            castShadow: false,
+            picking: true
+        });
+        mesh.setLocalTransform(transform);
+        mesh.properties.symbolIndex = symbolIndex;
+
+        const defines = {};
+        if (mesh.geometry.data.aAltitude) {
+            defines['HAS_ALTITUDE'] = 1;
+        }
+        mesh.setDefines(defines);
+        return mesh;
+    }
+
+    getMeshUniforms(geometry, symbol) {
+        const uniforms = {};
+        setUniformFromSymbol(uniforms, 'lineColor', symbol, 'lineColor', '#000', createColorSetter(this.colorCache));
+        setUniformFromSymbol(uniforms, 'lineOpacity', symbol, 'lineOpacity', 1);
+        return uniforms;
+    }
+
+    isEnableTileStencil(context) {
+        const isRenderingTerrainSkin = !!(context && context.isRenderingTerrain && this.isTerrainSkin());
+        const isEnableStencil = !isRenderingTerrainSkin;
+        return isEnableStencil;
+    }
+
+    init() {
+        const regl = this.regl;
+
+        this.renderer = new reshader.Renderer(regl);
+        const canvas = this.canvas;
+
+        const viewport = {
+            x: (_, props) => {
+                return props.viewport ? props.viewport.x : 0;
+            },
+            y: (_, props) => {
+                return props.viewport ? props.viewport.y : 0;
+            },
+            width: (_, props) => {
+                return props.viewport ? props.viewport.width : (canvas ? canvas.width : 1);
+            },
+            height: (_, props) => {
+                return props.viewport ? props.viewport.height : (canvas ? canvas.height : 1);
+            },
+        };
+
+        const uniforms = [
+            {
+                name: 'projViewModelMatrix',
+                type: 'function',
+                fn: function (context, props) {
+                    const projViewModelMatrix = [];
+                    mat4.multiply(projViewModelMatrix, props['projViewMatrix'], props['modelMatrix']);
+                    return projViewModelMatrix;
+                }
+            }
+        ];
+        const depthRange = this.sceneConfig.depthRange;
+        const config = {
+            name: 'vt-native-line',
+            vert,
+            frag,
+            wgslVert: getWGSLSource('vt_native_line_vert'),
+            wgslFrag: getWGSLSource('vt_native_line_frag'),
+            uniforms,
+            defines: null,
+            extraCommandProps: {
+                viewport,
+                stencil: {
+                    enable: (_, props) => {
+                        return this.isEnableTileStencil(props.painterContext);
+                    },
+                    func: {
+                        cmp: () => {
+                            return this.isOnly2D() ? '=' : '<=';
+                        },
+                        ref: (context, props) => {
+                            return props.stencilRef;
+                        }
+                    },
+                    op: {
+                        fail: 'keep',
+                        zfail: 'keep',
+                        zpass: 'replace'
+                    }
+                },
+                depth: {
+                    enable: true,
+                    range: depthRange || [0, 1],
+                    func: this.sceneConfig.depthFunc || '<='
+                },
+                blend: {
+                    enable: true,
+                    func: this.getBlendFunc(),
+                    equation: 'add'
+                },
+                polygonOffset: {
+                    enable: true,
+                    offset: this.getPolygonOffset()
+                }
+            }
+        };
+
+        this.shader = new reshader.MeshShader(config);
+
+        if (this.pickingFBO) {
+            this.picking = [new reshader.FBORayPicking(
+                this.renderer,
+                {
+                    name: 'vt-native-line-picking',
+                    wgslVert: getWGSLSource('vt_native_line_vert'),
+                    vert: pickingVert,
+                    uniforms,
+                    defines: { 'PICKING_MODE': 1 },
+                    extraCommandProps: {
+                        viewport: this.pickingViewport
+                    }
+                },
+                this.pickingFBO,
+                this.getMap()
+            )];
+        }
+    }
+
+    getUniformValues(map, context) {
+        const isRenderingTerrainSkin = context && context.isRenderingTerrainSkin;
+        const projViewMatrix = isRenderingTerrainSkin ? IDENTITY_ARR : map.projViewMatrix;
+        return {
+            projViewMatrix,
+            viewport: isRenderingTerrainSkin && context && context.viewport,
+        };
+    }
+
+    getPrimitive() {
+        return 'lines';
+    }
+}
+
+export default NativeLinePainter;

@@ -1,0 +1,42 @@
+import { getWGSLSource } from '../gpu/WGSLSources';
+import QuadShader from './QuadShader.js';
+import frag from './glsl/copy.frag';
+class CopyShader extends QuadShader {
+    constructor() {
+        super({
+            name: 'copy',
+            wgslFrag: getWGSLSource('gl_copy_frag'),
+            frag,
+            extraCommandProps: {
+                viewport: {
+                    x: 0,
+                    y: 0,
+                    width: (_, props) => {
+                        return props['size'][0];
+                    },
+                    height: (_, props) => {
+                        return props['size'][1];
+                    }
+                },
+                blend: {
+                    enable: true,
+                    func: {
+                        src: 1,
+                        dst: 'one minus src alpha'
+                    }
+                }
+            }
+        });
+    }
+
+    getMeshCommand(regl, mesh) {
+        const key = this.dkey || '';
+        const cmdKey = key + '_copy';
+        if (!this.commands[cmdKey]) {
+            this.commands[cmdKey] = this.createMeshCommand(regl, mesh);
+        }
+        return this.commands[cmdKey];
+    }
+}
+
+export default CopyShader;

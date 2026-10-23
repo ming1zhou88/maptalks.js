@@ -1,0 +1,106 @@
+import { version } from '../package.json';
+export { default as GlobalConfig } from './GlobalConfig';
+export * from './core/ResourceProxy';
+export * from './core/Constants';
+export { default as Browser } from './core/Browser';
+import * as Util from './core/util/index';
+import * as DomUtil from './core/util/dom';
+import * as StringUtil from './core/util/strings';
+import * as MapboxUtil from './core/mapbox';
+import * as BBOXUtil from './core/util/bbox';
+import { getResouceCacheInstance } from './core/ResourceCacheManager';
+/** @namespace math */
+export * as math from './core/math';
+
+import * as MicroTask from './core/MicroTask';
+export { Util, DomUtil, StringUtil, MapboxUtil, MicroTask, BBOXUtil, getResouceCacheInstance };
+
+export { default as LRUCache } from './core/util/LRUCache';
+export { default as Ajax } from './core/Ajax';
+export { default as Canvas } from './core/Canvas';
+
+// core classes
+export { default as Class } from './core/Class';
+export { default as Eventable } from './core/Eventable';
+export { GlobalEvent } from './core/GlobalEvent';
+export { default as JSONAble } from './core/JSONAble';
+export { default as CollisionIndex } from './core/CollisionIndex';
+
+export { default as Handlerable } from './handler/Handlerable';
+export { default as Handler } from './handler/Handler';
+export { default as DragHandler } from './handler/Drag';
+
+// geo classes
+export * from './geo/index';
+
+import { Map } from './map/index';
+import { MapStateCache } from './map/MapStateCache';
+Map.VERSION = version;
+export { Map, MapStateCache };
+
+export { MapTool, DrawTool, AreaTool, DistanceTool } from './map/tool/index';
+export { default as SpatialReference, getDefaultSpatialReference } from './map/spatial-reference/SpatialReference';
+// import './map/spatial-reference/SpatialReference.Arc';
+// import './map/spatial-reference/SpatialReference.WMTS';
+
+/** @namespace ui */
+import * as ui from './ui/index';
+/** @namespace control */
+import * as control from './control/index';
+export { ui, control };
+
+export * from './layer/index';
+
+export * from './geometry/index';
+
+import './geometry/editor/GeometryEditor';
+import './geometry/editor/TextEditable';
+
+import './geometry/ext/Geometry.Animation';
+import './geometry/ext/Geometry.Drag';
+import './geometry/ext/Geometry.Edit';
+import './geometry/ext/Geometry.Events';
+import './geometry/ext/Geometry.InfoWindow';
+import './geometry/ext/Geometry.JSON';
+
+/**
+ * @namespace renderer
+ */
+// import layer renderers
+import * as renderer from './renderer/index';
+export { renderer };
+// import geometry renderers
+import './renderer/geometry';
+import * as symbolizer from './renderer/geometry/symbolizers/index';
+/** @namespace animation */
+import * as animation from './core/Animation';
+export { symbolizer, animation };
+export { animate } from './core/Animation';
+
+export { registerWorkerAdapter } from './core/worker/Worker';
+
+import Actor from './core/worker/Actor';
+
+/**
+ * @namespace worker
+ */
+const worker = {
+    Actor: Actor
+};
+
+export { worker };
+
+Util.checkMTKVersion(version);
+
+//export types for external usage
+export type { MixinConstructor } from './core/Mixin';
+export type { LayerJSONType, LayerIdentifyOptionsType } from './layer/Layer';
+export type { LayerImageType } from './layer/ImageLayer';
+export type { WithNull, WithUndef, Optional, Requireal } from './types/typings';
+export type { RenderContext, Tile } from './renderer/layer/tilelayer/TileLayerRendererable';
+export type { ArrayExtent } from './geo/Extent';
+export type { PositionArray } from './geo/Position';
+export type { Callback } from './core/Ajax';
+export type { TileLayerOptionsType } from './layer/tile/TileLayer';
+export type { OverlayLayerOptionsType } from './layer/OverlayLayer';
+export type { FillSymbol, LineSymbol, TextSymbol, MarkerCommonSymbol } from './symbol/index';

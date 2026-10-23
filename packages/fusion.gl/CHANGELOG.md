@@ -1,0 +1,148 @@
+# @maptalks/fusiongl
+
+## 0.126.0
+
+### Minor Changes
+
+- upgrade maptalks
+
+## 0.125.0
+
+### Minor Changes
+
+- some features and many fixes
+
+## 0.124.4
+
+### Patch Changes
+
+- bug fixes
+
+## 0.124.3
+
+### Patch Changes
+
+- GltfLoader add fetchSchema option
+
+## 0.124.2
+
+### Patch Changes
+
+- minor fixes and features
+
+## 0.124.1
+
+### Patch Changes
+
+- fixes for geojson on terrain
+
+## 0.124.0
+
+### Minor Changes
+
+- a webgpu fix version ready for integration tests
+
+## 0.123.0
+
+### Minor Changes
+
+- change @maptalks/gpu to wgsl register
+
+## 0.122.0
+
+### Minor Changes
+
+- add support for mesh_features, structural_metadata, gpu_instancing extensions in gltf-loader (#2802)
+
+## 0.121.0
+
+### Minor Changes
+
+- add sdf in vt and some fixes on webgpu
+
+## 0.120.0
+
+### Minor Changes
+
+- first version of webgpu for integration test
+
+## 0.119.0
+
+### Minor Changes
+
+- mainly a bug fix version with some new features
+
+## 0.118.1
+
+### Patch Changes
+
+- fix DrawToolLayer
+
+## 0.118.0
+
+### Minor Changes
+
+- fixes and features
+
+## 0.117.1
+
+### Patch Changes
+
+- fixes with terrain, tilelayer and gltf-lit renderPlugin
+
+## 0.117.0
+
+### Minor Changes
+
+- major fixes version against webgpu renderer
+
+## 0.116.0
+
+### Minor Changes
+
+- fixes against maptalks-gpu
+
+## 0.115.1
+
+### Patch Changes
+
+- fixes related with terrain
+
+## 0.115.0
+
+### Minor Changes
+
+- focusing on bug fixes and serveral improvements
+
+## 0.10.1
+
+### Patch Changes
+
+- fix: fix LayerAbstractRenderer resizeCanvas and compatibility with ThreeLayer
+
+## 0.10.0
+
+### Minor Changes
+
+- - implement terrain-flat-mask rendre plugin in VectorLayer
+  - sync codes with maptalks/gl-layers
+  - webgl layers' compatibility fixes with MapCanvasRenderer
+  - bug fixes in maptalks
+
+## 0.9.1
+
+### Patch Changes
+
+- fix bundle export and analysis's import of reshader.gl
+
+## 0.9.0
+
+### Minor Changes
+
+- fix conlict versions on npm
+
+## 0.8.0
+
+### Minor Changes
+
+- Bug fixes, remove analysis and msd-loader from maptalks-gl

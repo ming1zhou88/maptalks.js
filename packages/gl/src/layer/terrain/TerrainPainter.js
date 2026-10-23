@@ -1,0 +1,427 @@
+import { getWGSLSource } from '../../reshader/gpu/WGSLSources';
+import  { extend, hasOwn, isNil } from '../util/util';
+import * as ContextUtil from '../util/context';
+import { vec3, mat4 } from 'gl-matrix';
+import * as reshader from '../../reshader';
+import { EMPTY_TERRAIN_GEO } from './TerrainTileUtil.js';
+import { ColorIn } from 'colorin';
+
+import vert from './glsl/terrain.vert';
+import frag from './glsl/terrain.frag';
+
+const V3 = [];
+const SCALE3 = [];
+
+class TerrainPainter {
+    constructor(layer) {
+        this.layer = layer;
+        const renderer = layer.getRenderer();
+        this.device = renderer.regl || renderer.device;
+        this.renderer = new reshader.Renderer(this.device);
+        this._leafScene = new reshader.Scene();
+        const pixels = new Uint8Array(16);
+        pixels.fill(255);
+        this._emptyTileTexture = this.device.texture({
+            width: 2,
+            height: 2,
+            data: pixels
+        });
+        this._resLoader = new reshader.ResourceLoader(this._emptyTileTexture);
+        this._createEmptyTerrainGeo();
+    }
+
+    setToRedraw() {
+        this.layer.getRenderer().setToRedraw();
+    }
+
+    getMap() {
+        return this.layer.getMap();
+    }
+
+    startFrame(context) {
+        if (context && context.states && context.states.includesChanged) {
+            this.shader.dispose();
+            delete this.shader;
+        }
+        if (!this.shader) {
+            this.initShader(context);
+        }
+        const layerColors = this.layer.options.colors;
+        const defines = this.shader.shaderDefines || {};
+        if (layerColors && layerColors.length && !compareColors(this.colors, layerColors)) {
+            this.colors = layerColors;
+            this._createColorsTexture();
+            defines['HAS_COLORS'] = 1;
+        } else if (!layerColors || !layerColors.length) {
+            this.colors = null;
+            delete defines['HAS_COLORS'];
+        }
+        this.shader.shaderDefines = defines;
+        this._leafScene.clear();
+    }
+
+    createTerrainMesh(tileInfo, terrainImage) {
+        const { mesh: terrainGeo, image: heightTexture } = terrainImage;
+        let mesh = terrainImage.terrainMesh;
+        const { positions, texcoords, triangles, empty } = terrainGeo;
+        if (mesh && mesh.geometry !== this._emptyTerrainGeometry) {
+            mesh.geometry.updateData('aPosition', positions);
+            mesh.geometry.updateData('aTexCoord', texcoords);
+            mesh.geometry.setElements(triangles);
+            mesh.geometry.generateBuffers(this.device);
+        } else {
+            const geo = empty ?
+                this._emptyTerrainGeometry :
+                new reshader.Geometry({
+                    aPosition: positions,
+                    aTexCoord: texcoords
+                },
+                triangles,
+                0);
+            if (geo !== this._emptyTerrainGeometry) {
+                geo.generateBuffers(this.device);
+            }
+            if (mesh) {
+                mesh.geometry = geo;
+            } else {
+                mesh = new reshader.Mesh(geo, null, {
+                    disableVAO: true
+                });
+            }
+        }
+        if (!mesh.uniforms.skin) {
+            const emptyTexture = this.getEmptyTexture();
+            mesh.setUniform('skin', emptyTexture);
+        }
+        if (!mesh.uniforms.flatMask) {
+            const emptyTexture = this.getEmptyTexture();
+            mesh.setUniform('flatMask', emptyTexture);
+            mesh.setUniform('maskResolution', [emptyTexture.width, emptyTexture.height]);
+        }
+
+        mesh.setUniform('heightTexture', heightTexture);
+        this.prepareMesh(mesh, tileInfo, terrainImage);
+        mesh.setDefines({ IS_TERRAIN: 1 })
+        return mesh;
+    }
+
+    _updateMaskDefines(mesh) {
+        const renderer = this.layer.getRenderer();
+        if (renderer) {
+            renderer.updateMaskDefines(mesh);
+        }
+    }
+
+    _getPositionMatrix(out) {
+        const heightScale = this._getHeightScale();
+        const positionMatrix = mat4.identity(out);
+        mat4.scale(positionMatrix, positionMatrix, [1, 1, heightScale]);
+        return positionMatrix;
+    }
+
+    _getHeightScale() {
+        let exaggeration = this.layer.options.exaggeration;
+        if (isNil(exaggeration)) {
+            exaggeration = 1;
+        }
+        return this._getPointZ(100) / 100 * exaggeration;
+    }
+
+    _getLocalTransform(out, tileInfo, terrainWidth) {
+        const map = this.getMap();
+        const tileSize = this.layer.getTileSize().width;
+        const scale = tileInfo.res / map.getGLRes();
+
+        const terrainScale = tileSize / (terrainWidth - 1);
+
+        const { extent2d, offset } = tileInfo;
+        vec3.set(V3, (extent2d.xmin - offset[0]) * scale, (tileInfo.extent2d.ymax - offset[1]) * scale, 0);
+        const localTransform = mat4.identity(out);
+        mat4.translate(localTransform, localTransform, V3);
+
+        vec3.set(SCALE3, scale * terrainScale, scale * terrainScale, 1);
+        mat4.scale(localTransform, localTransform, SCALE3);
+        return localTransform;
+    }
+
+    prepareMesh(mesh, tileInfo, terrainImage) {
+        if (!mesh.isValid()) {
+            return;
+        }
+        const { mesh: terrainGeo } = terrainImage;
+        this._updateMaskDefines(mesh);
+        const { triangles, numTrianglesWithoutSkirts, terrainWidth } = terrainGeo;
+        mesh.localTransform = this._getLocalTransform(mesh.localTransform || [], tileInfo, terrainWidth);
+        mesh.positionMatrix = this._getPositionMatrix(mesh.positionMatrix || []);
+        mesh.properties.skirtOffset = numTrianglesWithoutSkirts * 3;
+        mesh.properties.skirtCount = triangles.length - numTrianglesWithoutSkirts * 3;
+        mesh.properties.z = tileInfo.z;
+        mesh.properties.minHeight = terrainGeo.minHeight;
+        mesh.properties.maxHeight = terrainGeo.maxHeight;
+        mesh.properties.terrainWidth = terrainWidth;
+        mesh.castShadow = false;
+        if (!hasOwn(mesh.uniforms, 'minAltitude')) {
+            // for empty terrain
+            Object.defineProperty(mesh.uniforms, 'minAltitude', {
+                enumerable: true,
+                get: () => {
+                    return terrainImage.minAltitude || 0;
+                }
+            });
+        }
+    }
+
+    addTerrainImage(tileInfo, tileImage) {
+        const mesh = tileImage.terrainMesh;
+        if (mesh && mesh.geometry && tileImage.skin) {
+            mesh.setUniform('skin', tileImage.skin.color[0]);
+            const mask = tileImage.mask.color[0];
+            mesh.setUniform('flatMask', mask);
+            mesh.setUniform('maskResolution', [mask.width, mask.height]);
+            mesh.setUniform('polygonOpacity', 1.0);
+            // const { skirtOffset, skirtCount } = mesh.properties;
+            // mesh.geometry.setDrawOffset(skirtOffset);
+            // mesh.geometry.setDrawCount(skirtCount);
+            this._leafScene.addMesh(mesh);
+        }
+    }
+
+    endFrame(context) {
+        this.updateIBLDefines(this.shader);
+        let renderCount = 0;
+
+        const uniforms = this.getUniformValues();
+
+        const fbo = this._getRenderFBO(context);
+        this.shader.filter = context && context.sceneFilter;
+        ContextUtil.setIncludeUniformValues(uniforms, context);
+        this._leafScene.getMeshes().forEach((mesh) => {
+            this._updateMaskDefines(mesh);
+        });
+        renderCount += this.renderer.render(this.shader, uniforms, this._leafScene, fbo);
+        return renderCount;
+    }
+
+    delete() {
+        if (this.shader) {
+            this.shader.dispose();
+            delete this.shader;
+        }
+        if (this.colorsTexture) {
+            this.colorsTexture.destroy();
+            delete this.colorsTexture;
+        }
+        if (this._emptyTileTexture) {
+            this._emptyTileTexture.destroy();
+            delete this._emptyTileTexture;
+        }
+        if (this._emptyTerrainGeometry) {
+            this._emptyTerrainGeometry.dispose();
+            delete this._emptyTerrainGeometry;
+        }
+    }
+
+    deleteMesh(terrainMesh) {
+        if (!terrainMesh) {
+            return;
+        }
+        const geo = terrainMesh.geometry;
+        terrainMesh.dispose();
+        if (geo !== this._emptyTerrainGeometry) {
+            geo.dispose();
+        }
+    }
+
+    initShader(context) {
+        const projViewModelMatrix = [], modelViewMatrix = [];
+        const defines = {};
+        const uniformDeclares = [];
+        ContextUtil.fillIncludes(defines, uniformDeclares, context);
+        this.shader = new reshader.MeshShader({
+            name: 'terrain-mesh',
+            vert,
+            frag,
+            wgslVert: getWGSLSource('gl_terrain_vert'),
+            wgslFrag: getWGSLSource('gl_terrain_frag'),
+            uniforms: uniformDeclares.concat([
+                {
+                    name: 'modelViewMatrix',
+                    type: 'function',
+                    fn: function (context, props) {
+                        return mat4.multiply(modelViewMatrix, props['viewMatrix'], props['modelMatrix']);
+                    }
+                },
+                {
+                    name: 'projViewModelMatrix',
+                    type: 'function',
+                    fn: function (context, props) {
+                        return mat4.multiply(projViewModelMatrix, props['projViewMatrix'], props['modelMatrix']);
+                    }
+                }
+            ]),
+            defines,
+            extraCommandProps: this.getExtraCommandProps()
+        });
+    }
+
+    getExtraCommandProps() {
+        const canvas = this.layer.getRenderer().canvas;
+        const extraCommandProps = {
+            viewport: {
+                x : 0,
+                y : 0,
+                width : () => {
+                    return canvas ? canvas.width : 1;
+                },
+                height : () => {
+                    return canvas ? canvas.height : 1;
+                }
+            },
+            cull: {
+                enable: true,
+                face: 'back'
+            },
+            depth: {
+                enable: true,
+                mask: () => {
+                    const depthMask = this.layer.options['depthMask'];
+                    return !!depthMask;
+                },
+                func: this.layer.options['depthFunc'] || '<='
+                // func: (_, props) => {
+                //     if (props['depthFunc']) {
+                //         return props['depthFunc'];
+                //     }
+                //     return this.layer.options['depthFunc'] || '<=';
+                // },
+            },
+            blend: {
+                enable: true,
+                func: { src: this.layer.options.blendSrc, dst: this.layer.options.blendDst },
+                equation: 'add'
+            },
+        };
+        return extraCommandProps;
+    }
+
+    _getRenderFBO(context) {
+        //优先采用不aa的fbo
+        return context && context.renderTarget && context.renderTarget.fbo;
+    }
+
+    getUniformValues() {
+        const map = this.getMap();
+        const projViewMatrix = map.projViewMatrix;
+        const renderer = this.layer.getRenderer();
+        const maskUniforms = renderer.getMaskUniforms();
+        let layerOpacity = this.layer.options['opacity'];
+        if (isNil(layerOpacity)) {
+            layerOpacity = 1;
+        }
+        const uniforms = {
+            viewMatrix: map.viewMatrix,
+            projMatrix: map.projMatrix,
+            projViewMatrix,
+            layerOpacity,
+            colorsTexture: this.colorsTexture,
+            colorsMin: this.colorsMin,
+            colorsMax: this.colorsMax
+        };
+        extend(uniforms, maskUniforms);
+        return uniforms;
+    }
+
+    _getPointZ(height) {
+        const map = this.layer.getMap();
+        if (!map) {
+            return null;
+        }
+        const altitude = map.altitudeToPoint(height, map.getGLRes());
+        return altitude;
+    }
+
+    getEmptyTexture() {
+        return this._emptyTileTexture;
+    }
+
+    hasIBL() {
+        const lightManager = this.getMap().getLightManager();
+        const resource = lightManager && lightManager.getAmbientResource();
+        return !!resource;
+    }
+
+    updateIBLDefines(shader) {
+        const shaderDefines = shader.shaderDefines;
+        let updated = false;
+        if (this.hasIBL()) {
+            if (!shaderDefines[['HAS_IBL_LIGHTING']]) {
+                shaderDefines['HAS_IBL_LIGHTING'] = 1;
+                updated = true;
+            }
+        } else if (shaderDefines[['HAS_IBL_LIGHTING']]) {
+            delete shaderDefines['HAS_IBL_LIGHTING'];
+            updated = true;
+        }
+        if (updated) {
+            shader.shaderDefines = shaderDefines;
+        }
+    }
+
+    _createEmptyTerrainGeo() {
+        const emptyTerrainGeo = EMPTY_TERRAIN_GEO;
+        const { positions, texcoords, triangles } = emptyTerrainGeo;
+        this._emptyTerrainGeometry = new reshader.Geometry({
+            aPosition: positions,
+            aTexCoord: texcoords
+        },
+        triangles,
+        0);
+        this._emptyTerrainGeometry.generateBuffers(this.device);
+    }
+
+    _createColorsTexture() {
+        const ci = new ColorIn(this.colors);
+        const canvas = document.createElement('canvas');
+        canvas.width = ci.options.width;
+        canvas.height = ci.options.height;
+        const ctx = canvas.getContext('2d');
+        const data = ci.getImageData();
+        ctx.putImageData(data, 0, 0);
+        const config = {
+            data: canvas,
+            width: ci.options.width,
+            height: ci.options.height,
+            min: 'linear',
+            mag: 'linear'
+        };
+        if (this.colorsTexture) {
+            this.colorsTexture.destroy();
+            this.colorsTexture = null;
+        }
+        const texture = this.device.texture(config);
+        this.colorsTexture = texture;
+        this.colorsMin = ci.min;
+        this.colorsMax = ci.max;
+    }
+}
+
+export default TerrainPainter;
+
+// function terrainMeshCompare(m0, m1) {
+//     return m1.properties.z - m0.properties.z;
+// }
+
+function compareColors(colors, layerColors) {
+    if (!colors) {
+        return false;
+    }
+    if (colors.length !== layerColors.length) {
+        return false;
+    }
+    for (let i = 0; i < colors.length; i++) {
+        if (colors[i] !== layerColors[i]) {
+            return false;
+        }
+    }
+    return true;
+}

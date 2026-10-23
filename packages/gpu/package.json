@@ -1,0 +1,39 @@
+{
+  "name": "@maptalks/gpu",
+  "version": "0.126.0",
+  "description": "WebGL infrastrcture for maptalks",
+  "main": "dist/maptalksgpu.js",
+  "module": "dist/maptalksgpu.es.js",
+  "scripts": {
+    "clean": "rimraf dist && rimraf ./build/dist",
+    "build": "npm run clean && rollup --environment BUILD:production -c rollup.config.js",
+    "build-dev": "rollup -c rollup.config.js",
+    "dev": "rollup -w -c rollup.config.js"
+  },
+  "files": [
+    "dist/maptalksgpu.js",
+    "dist/maptalksgpu.es.js",
+    "dist/maptalksgpu.d.ts"
+  ],
+  "keywords": [
+    "webgl",
+    "maptalks"
+  ],
+  "types": "dist/maptalksgpu.d.ts",
+  "author": "fuzhenn",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@maptalks/gl": "workspace:*"
+  },
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^25.0.7",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "eslint": "^8.57.0",
+    "eslint-plugin-mocha": "^10.5.0",
+    "rollup": "^4.17.2",
+    "tslib": "^2.6.2",
+    "typescript": "^5.4.2",
+    "typescript-eslint": "^8.34.0"
+  },
+  "gitHead": "9eeea4807723d460fa7e09969c6556d53f6bed84"
+}

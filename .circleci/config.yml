@@ -1,0 +1,98 @@
+# Javascript Node CircleCI 2.0 configuration file
+#
+# Check https://circleci.com/docs/2.0/language-javascript/ for more details
+#
+version: 2.1
+executors:
+  node-browser-executor:
+    docker:
+      - image: cimg/node:22.14-browsers
+orbs:
+  browser-tools: circleci/browser-tools@1.4.8
+jobs:
+  maptalks-test:
+    executor: node-browser-executor
+
+    working_directory: ~/repo/
+
+    steps:
+      - browser-tools/install-chrome
+      - checkout
+
+      # Download and cache dependencies
+      - restore_cache:
+          name: Restore pnpm Package Cache
+          keys:
+            - pnpm-packages-{{ checksum "pnpm-lock.yaml" }}
+
+      - run:
+          name: Install pnpm package manager
+          command: |
+            sudo npm install --global pnpm
+
+      - run: pnpm i
+
+      - save_cache:
+          name: Save pnpm Package Cache
+          key: pnpm-packages-{{ checksum "pnpm-lock.yaml" }}
+          paths:
+            - .pnpm-store
+      - run: pnpm maptalks-test
+
+  vt-test:
+    executor: node-browser-executor
+    working_directory: ~/repo/
+    steps:
+      - checkout
+
+      # Download and cache dependencies
+      - restore_cache:
+          name: Restore pnpm Package Cache
+          keys:
+            - pnpm-packages-{{ checksum "pnpm-lock.yaml" }}
+
+      - run:
+          name: Install pnpm package manager
+          command: |
+            sudo npm install --global pnpm
+
+      - run: pnpm i
+
+      - save_cache:
+          name: Save pnpm Package Cache
+          key: pnpm-packages-{{ checksum "pnpm-lock.yaml" }}
+          paths:
+            - .pnpm-store
+      - run: pnpm build && pnpm vt-test
+
+  geo3dtiles-test:
+    executor: node-browser-executor
+    working_directory: ~/repo/
+    steps:
+      - checkout
+      # Download and cache dependencies
+      - restore_cache:
+          name: Restore pnpm Package Cache
+          keys:
+            - pnpm-packages-{{ checksum "pnpm-lock.yaml" }}
+
+      - run:
+          name: Install pnpm package manager
+          command: |
+            sudo npm install --global pnpm
+
+      - run: pnpm i
+
+      - save_cache:
+          name: Save pnpm Package Cache
+          key: pnpm-packages-{{ checksum "pnpm-lock.yaml" }}
+          paths:
+            - .pnpm-store
+      - run: pnpm build && pnpm 3dtiles-test
+
+workflows:
+  maptalks:
+    jobs:
+      - maptalks-test
+      - vt-test
+      - geo3dtiles-test
